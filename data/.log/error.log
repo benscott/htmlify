@@ -1,0 +1,15 @@
+[2024-07-10 10:25:04,712] {worker.py:247} ERROR - [pid 33756] Worker Worker(salt=606126725, workers=1, host=NHDWNQLJW5FW.local, username=ben, pid=33756) failed    PageTask(url=http://127.0.0.1/taxonomy/term/8)
+Traceback (most recent call last):
+  File "/Users/ben/Projects/Scratchpads/.venv/lib/python3.12/site-packages/luigi/worker.py", line 210, in run
+    new_deps = self._run_get_new_deps()
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ben/Projects/Scratchpads/.venv/lib/python3.12/site-packages/luigi/worker.py", line 138, in _run_get_new_deps
+    task_gen = self.task.run()
+               ^^^^^^^^^^^^^^^
+  File "/Users/ben/Projects/Scratchpads/Code/htmlify/htmlify/tasks/page.py", line 54, in run
+    if self._is_tiny_tax():
+       ^^^^^^^^^^^^^^^^^^^
+  File "/Users/ben/Projects/Scratchpads/Code/htmlify/htmlify/tasks/page.py", line 60, in _is_tiny_tax
+    return bool(self.soup.find('section', {"class": "block-tinytax"}))
+        ^^^^^^^^^
+AttributeError: 'PageTask' object has no attribute 'soup'

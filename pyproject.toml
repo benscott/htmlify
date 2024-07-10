@@ -1,0 +1,20 @@
+[project]
+name = "htmlify"
+version = "0.0.1"
+authors = [
+  { name="Ben Scott", email="ben@benscott.co.uk" }
+]
+description = "htmlify"
+readme = "README.md"
+requires-python = ">=3.7"
+classifiers = [
+]
+
+[project.urls]
+"Homepage" = "https://github.com/benscott/htmlify"
+
+[tool.setuptools.packages.find]
+where = ["."]  # list of folders that contain the packages (["."] by default)
+include = ["htmlify"]  # package names should match these glob patterns (["*"] by default)
+exclude = []  # exclude packages matching these glob patterns (empty by default)
+namespaces = false 
