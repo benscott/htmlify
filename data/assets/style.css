@@ -1,0 +1,5 @@
+.tinytax .click:hover,
+.tinytax img:hover,
+.tinytax img{
+    cursor: default!important;
+}
