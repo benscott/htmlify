@@ -1,16 +1,26 @@
 from pathlib import Path
 import logging
+import os
+from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).parent.parent.resolve()
 
+load_dotenv(ROOT_DIR / '.env')
+
 DATA_DIR = Path(ROOT_DIR / 'data')
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+PROCESSING_DATA_DIR = Path(DATA_DIR / 'processing')
+PROCESSING_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 LOG_DIR = Path(DATA_DIR / '.log')
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-SITES_DIR = Path(DATA_DIR / 'sites')
+SITES_DIR = Path('/Users/ben/Projects/Scratchpads/Sites')
 SITES_DIR.mkdir(parents=True, exist_ok=True)
+
+PLATFORMS_DIR = os.getenv('PLATFORMS_DIR')
+SCHEME = os.getenv('SCHEME', 'http')
+USE_SELENIUM = True
 
 # Set up logging - inherit from luigi so we use the same interface
 logger = logging.getLogger('luigi-interface')

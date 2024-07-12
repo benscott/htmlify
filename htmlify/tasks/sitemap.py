@@ -5,14 +5,14 @@ import itertools
 import yaml
 
 
-from htmlify.config import DATA_DIR
+from htmlify.config import PROCESSING_DATA_DIR
 from htmlify.tasks.base import BaseExternalTask
 
 class SiteMapTask(BaseExternalTask):
     
     domain = luigi.Parameter()
 
-    output_dir = DATA_DIR / 'sitemaps'
+    output_dir = PROCESSING_DATA_DIR / 'sitemaps'
 
     def __init__(self, **kwargs):
 
@@ -35,7 +35,6 @@ class SiteMapTask(BaseExternalTask):
 
         default_urls = [
             "biblio",
-            "biblio.bib",
             "gallery",
             "legal",
             "search",
@@ -111,7 +110,7 @@ class SiteMapTask(BaseExternalTask):
     
     def get_file_urls(self):
         urls = []
-        fids = self._query(f'SELECT fid FROM file_managed')
+        fids = self._query(f'SELECT fid FROM file_managed WHERE status = 1')
         for fid in fids:
             urls.append(f'file/{fid[0]}')    
 

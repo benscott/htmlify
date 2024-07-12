@@ -28,3 +28,7 @@ class UniqueStack():
         unseen = set(new_items).difference(self._seen)
         self._items.update(unseen)
         self._seen.update(unseen)  
+
+    def discard(self, item):
+        self._items.discard(item)
+        self._seen.discard(item)          
