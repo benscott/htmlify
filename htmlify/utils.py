@@ -4,7 +4,6 @@ import requests_cache
 import re
 from pathlib import Path
 
-
 session = requests_cache.CachedSession('.cache')
 
 links = [
@@ -34,7 +33,7 @@ def get_soup(url, cached=True):
     else:
         r = requests.get(url)
     r.raise_for_status()
-    return BeautifulSoup(r.text)
+    return BeautifulSoup(r.text, features="html.parser")
 
 def concat_path(p1: Path, p2: Path):
     # Strip first slash if it exists

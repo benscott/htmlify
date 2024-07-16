@@ -29,7 +29,7 @@ import requests_cache
 import mysql.connector
 
 
-from htmlify.config import PLATFORMS_DIR, SITES_DIR, DATA_DIR
+from htmlify.config import SITES_DIR, DATA_DIR, DB_PASSWORD, DB_USERNAME
 from htmlify.tasks.base import BaseTask
 from htmlify.tasks.crawl import CrawlSiteTask
 from htmlify.tasks.page import PageTask
@@ -41,71 +41,72 @@ from htmlify.utils import get_soup
 class SiteTask(BaseTask):
 
     domain = luigi.Parameter()
+    platform_path = luigi.PathParameter()
+    db_name = luigi.Parameter()
+    db_host = luigi.Parameter()
 
-    # def __init__(self, *args, **kwargs):
-    #     super().__init__(*args, **kwargs)            
+    def __init__(self,  *args, **kwargs):
+        super().__init__(*args, **kwargs)  
+        self.connection = mysql.connector.connect(
+            host=self.db_host,
+            port=3306,
+            user=DB_USERNAME,
+            password=DB_PASSWORD,
+            database=self.db_name
+        )         
 
+    def __del__(self):
+        self.connection.close()
+        pass
 
+    def requires(self):      
 
-    def requires(self):  
+        self.setup()
+
         # We have to do the dynamic dependencies this way, as if we put tasks
         # in run we get the error
-        crawl_task = CrawlSiteTask(domain=self.domain)
+        crawl_task = CrawlSiteTask(domain=self.domain, db_conn=self.connection)
         luigi.build([crawl_task], local_scheduler=True)
         # We don;t have t yield this - but keeps the dependency graph accurate
         yield crawl_task
-        # with crawl_task.output().open() as f:
-        #     links = yaml.full_load(f)
-        #     for link in links:
-        #         yield PageTask(url=link, output_dir=self.output().path)    
+        with crawl_task.output().open() as f:
+            links = yaml.full_load(f)
+            for link in links:
+                yield PageTask(url=link, output_dir=self.output().path)    
 
-    def run(self):
+
+    def setup(self):
 
         # Copy accross additional assets
         ASSETS_DIR = Path(DATA_DIR / 'assets')
+        sites_dir = Path(self.output().path)
 
-        dest_assets_dir = Path(self.output().path) / 'assets'
+        dest_assets_dir = sites_dir / 'assets'
+
+        symlink_path = (sites_dir / 'sites')
+        symlink_path.parent.mkdir(parents=True, exist_ok=True)
+        if not symlink_path.exists():
+            symlink_path.symlink_to(self.platform_path / 'sites')
 
         if dest_assets_dir.exists():
             shutil.rmtree(dest_assets_dir)
 
         shutil.copytree(ASSETS_DIR, dest_assets_dir)
 
-        pass
-
-        # for i in self.input():
-        #     if i.path.endswith('.html'):
-        #         with i.open('r') as f:  
-        #             soup = BeautifulSoup(f, "html.parser")  
-
-        #             if not soup.find('div', id='section-content'):
-        #                 raise Exception(f'HTML file has no content: {i.path}')
-
-        #             # TODO
-
-
-        #     print(type(i))
-
-        # with self.input().open('r') as f:  
-        #     soup = BeautifulSoup(self.driver.page_source, "html.parser")      
-        #     print(soup)
-        #     break
-        #     # break
-        #     pass
-        #     urls = yaml.full_load(f)
-        #     luigi.build([
-        #         PageTask(url=url, output_dir=self.output().path) for url in urls
-        #     ], local_scheduler=True)
-
-        # print(links)
-
-    def setup(self):
-        print('SETUP')
-
     def output(self):
         return luigi.LocalTarget(SITES_DIR / self.domain)
+    
+    def complete(self):
+        return  False
 
 
 if __name__ == "__main__":    
     domain = '127.0.0.1'
-    luigi.build([SiteTask(domain=domain, force=True)], local_scheduler=True)         
+    luigi.build([
+        SiteTask(
+            domain=domain, 
+            db_name='drupal',
+            db_host='127.0.0.1',
+            platform_path='/Users/ben/Projects/Scratchpads/Code/scratchpads2',
+            force=True
+        )], local_scheduler=True)         

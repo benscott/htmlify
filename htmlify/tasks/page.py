@@ -116,7 +116,6 @@ class PageTask(BaseTask):
         else:
             return self.output_dir
 
-    
     def output(self):
         # format=luigi.format.Nop - Binary output
         return luigi.LocalTarget(self.parsed_path / 'index.html', format=luigi.format.Nop)
@@ -225,7 +224,7 @@ class PageTask(BaseTask):
         dest_path = concat_path(self.output_dir, parsed_url.path)
 
         # If this file is in the sites directory, we should already have it
-        if parsed_url.path.startswith('/sites2'):
+        if parsed_url.path.startswith('/sites'):
             if not dest_path.exists():                
                 logger.error(f'Sites file {dest_path} does not exist')
 
@@ -293,7 +292,7 @@ if __name__ == "__main__":
         PageTask(
             # url='http://127.0.0.1/content/search2/', 
             # url='http://127.0.0.1/taxonomy/term/11/media',
-            url='http://127.0.0.1/classification/4',
+            url='http://127.0.0.1',
             output_dir=Path('/Users/ben/Projects/Scratchpads/Sites/127.0.0.1'), 
             force=True)
             ], 

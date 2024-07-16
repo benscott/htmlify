@@ -3,35 +3,23 @@ import mysql.connector
 import phpserialize
 import itertools
 import yaml
+import pandas as pd
 
 
-from htmlify.config import PROCESSING_DATA_DIR
+from htmlify.config import PROCESSING_DATA_DIR, DB_USERNAME, DB_PASSWORD, logger
 from htmlify.tasks.base import BaseExternalTask
+from htmlify.tasks.sites_list import SitesListTask
 
 class SiteMapTask(BaseExternalTask):
     
     domain = luigi.Parameter()
-
+    db_conn = luigi.Parameter()
     output_dir = PROCESSING_DATA_DIR / 'sitemaps'
 
-    def __init__(self, **kwargs):
-
-        super().__init__(**kwargs)
-
-        self.connection = mysql.connector.connect(
-            host='localhost',
-            port=3306,
-            user='drupal',
-            password='drupal',
-            database='drupal'
-        )        
-        print('Connected: ', self.connection.is_connected())
-        self.cursor = self.connection.cursor()
-
-    def __del__(self):
-        self.connection.close()
-
     def run(self):
+
+        logger.debug(f'Connected: {self.db_conn.is_connected()}')
+        self.cursor = self.db_conn.cursor()
 
         default_urls = [
             "biblio",
@@ -178,4 +166,13 @@ class SiteMapTask(BaseExternalTask):
 
 if __name__ == "__main__":    
     domain = '127.0.0.1'
-    luigi.build([SiteMapTask(domain=domain, force=True)], local_scheduler=True)    
+
+    db_conn = mysql.connector.connect(
+            host='127.0.0.1',
+            port=3306,
+            user=DB_USERNAME,
+            password=DB_PASSWORD,
+            database='drupal'
+        )      
+
+    luigi.build([SiteMapTask(domain=domain, db_conn=db_conn, force=True)], local_scheduler=True)    

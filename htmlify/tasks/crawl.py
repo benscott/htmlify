@@ -12,7 +12,7 @@ import yaml
 import mysql.connector
 
 
-from htmlify.config import DATA_DIR, SCHEME, logger
+from htmlify.config import PROCESSING_DATA_DIR, DB_USERNAME, DB_PASSWORD, SCHEME, logger
 from htmlify.tasks.base import BaseTask
 from htmlify.tasks.sitemap import SiteMapTask
 from htmlify.stack import UniqueStack
@@ -21,8 +21,9 @@ from htmlify.utils import get_soup, is_decommisionned_link
 class CrawlSiteTask(BaseTask):
 
     domain = luigi.Parameter()
+    db_conn = luigi.Parameter()
     
-    output_dir = DATA_DIR / 'crawl'    
+    output_dir = PROCESSING_DATA_DIR / 'crawl'    
 
     def requires(self):
         return SiteMapTask(domain=self.domain) 
@@ -94,4 +95,11 @@ class CrawlSiteTask(BaseTask):
     
 if __name__ == "__main__":    
     domain = '127.0.0.1'
-    luigi.build([CrawlSiteTask(domain=domain, force=True)], local_scheduler=True)   
+    db_conn = mysql.connector.connect(
+            host='127.0.0.1',
+            port=3306,
+            user=DB_USERNAME,
+            password=DB_PASSWORD,
+            database='drupal'
+        )      
+    luigi.build([CrawlSiteTask(domain=domain, db_conn=db_conn, force=True)], local_scheduler=True)   

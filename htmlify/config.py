@@ -18,9 +18,14 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 SITES_DIR = Path('/Users/ben/Projects/Scratchpads/Sites')
 SITES_DIR.mkdir(parents=True, exist_ok=True)
 
-PLATFORMS_DIR = os.getenv('PLATFORMS_DIR')
+# PLATFORMS_DIR = os.getenv('PLATFORMS_DIR')
 SCHEME = os.getenv('SCHEME', 'http')
 USE_SELENIUM = True
+
+
+DB_USERNAME = os.getenv('DB_USERNAME')
+DB_PASSWORD = os.getenv('DB_PASSWORD')
+
 
 # Set up logging - inherit from luigi so we use the same interface
 logger = logging.getLogger('luigi-interface')
