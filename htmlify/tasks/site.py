@@ -29,12 +29,12 @@ import requests_cache
 import mysql.connector
 
 
-from htmlify.config import SITES_DIR, DATA_DIR, DB_PASSWORD, DB_USERNAME
+from htmlify.config import SITES_DIR, DATA_DIR, DB_PASSWORD, DB_USERNAME, PLATFORMS_ROOT_PATH
 from htmlify.tasks.base import BaseTask
 from htmlify.tasks.crawl import CrawlSiteTask
 from htmlify.tasks.page import PageTask
 from htmlify.stack import UniqueStack
-from htmlify.utils import get_soup
+from htmlify.utils import get_soup, get_first_directory
 
 
 
@@ -85,8 +85,17 @@ class SiteTask(BaseTask):
 
         symlink_path = (sites_dir / 'sites')
         symlink_path.parent.mkdir(parents=True, exist_ok=True)
+
         if not symlink_path.exists():
-            symlink_path.symlink_to(self.platform_path / 'sites')
+
+            # If platforms are mounted in a different location
+            if PLATFORMS_ROOT_PATH:
+                relative_path = self.platform_path.relative_to(get_first_directory(self.platform_path))
+                platform_path = PLATFORMS_ROOT_PATH / relative_path
+            else:
+                platform_path = self.platform_path         
+            
+            symlink_path.symlink_to(platform_path / 'sites')
 
         if dest_assets_dir.exists():
             shutil.rmtree(dest_assets_dir)
@@ -101,6 +110,9 @@ class SiteTask(BaseTask):
 
 
 if __name__ == "__main__":    
+
+
+
     domain = '127.0.0.1'
     luigi.build([
         SiteTask(

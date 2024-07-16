@@ -39,3 +39,15 @@ def concat_path(p1: Path, p2: Path):
     # Strip first slash if it exists
     p2 = p2[1:] if p2.startswith('/') else p2
     return p1 / p2
+
+def get_first_directory(path):
+    # Convert to Path object if it's not already
+    path = Path(path)
+    
+    # Split the path into its parts
+    parts = path.parts
+    
+    # Find the first part that is not the root
+    for part in parts:
+        if part != path.anchor:
+            return Path(path.anchor) / part
