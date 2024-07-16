@@ -15,7 +15,7 @@ PROCESSING_DATA_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR = Path(DATA_DIR / '.log')
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-SITES_DIR = Path('/Users/ben/Projects/Scratchpads/Sites')
+SITES_DIR = Path(os.getenv('SITES_DIR', '/Users/ben/Projects/Scratchpads/Sites'))
 SITES_DIR.mkdir(parents=True, exist_ok=True)
 
 # PLATFORMS_DIR = os.getenv('PLATFORMS_DIR')
