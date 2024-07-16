@@ -12,8 +12,8 @@ from htmlify.tasks.base import BaseExternalTask, BaseTask
 class SitesListTask(BaseExternalTask):
 
     def run(self):
-        column_names = ['nid', 'domain', 'platform_path', 'db_name', 'db_host']
-        df = pd.read_csv(DATA_DIR / 'static-sites.csv', sep='\t', names=column_names)  
+        # column_names = ['nid', 'domain', 'platform_path', 'db_name', 'db_host']
+        df = pd.read_csv(DATA_DIR / 'vhosts.csv')  
 
         site_aliases = pd.read_csv(DATA_DIR / 'static-site-aliases.csv', sep='\t', names=['nid', 'alias'])      
 

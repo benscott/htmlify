@@ -3,6 +3,8 @@ Convert Scratchpads to HTML
 
 ## Apache
 
+https://www.digitalocean.com/community/tutorials/how-to-install-the-apache-web-server-on-ubuntu-22-04
+
 ## MYSQL
 
 -- Create the new user
