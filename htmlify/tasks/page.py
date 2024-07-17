@@ -161,7 +161,7 @@ class PageTask(BaseTask):
             self._update_search_form(search_form, soup)
 
     def _update_search_form(self, search_form, soup):
-            search_form['action'] = 'http://www.google.com/search'   
+            search_form['action'] = 'https://www.google.com/search'   
             search_form['method'] = 'get'   
 
             input_tag = search_form.find('input', {'name': 'search_block_form'}) or search_form.find('input', {'name': 'keys'})
@@ -334,6 +334,9 @@ class PageTask(BaseTask):
     def search_page(self, soup):
         if search_form := soup.find('form', id='search-form'):
             self._update_search_form(search_form, soup) 
+
+        if search_facets := soup.find('div', class_="apachesolr-browse-blocks"):
+            search_facets.decompose()            
 
     def biblio_page(self, soup):
         if biblio_links := soup.find('div', class_='biblio-links-info'):
