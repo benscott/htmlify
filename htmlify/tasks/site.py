@@ -57,7 +57,6 @@ class SiteTask(BaseTask):
 
     def __del__(self):
         self.connection.close()
-        pass
 
     def requires(self):      
 
@@ -106,8 +105,7 @@ class SiteTask(BaseTask):
         return luigi.LocalTarget(SITES_DIR / self.domain)
     
     def complete(self):
-        return  False
-
+        return (Path(self.output().path) / 'index.html').exists()
 
 if __name__ == "__main__":    
 
