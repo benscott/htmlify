@@ -26,7 +26,7 @@ class CrawlSiteTask(BaseTask):
     output_dir = PROCESSING_DATA_DIR / 'crawl'    
 
     def requires(self):
-        return SiteMapTask(domain=self.domain) 
+        return SiteMapTask(domain=self.domain, db_conn=db_conn)
     
     def run(self):
 
@@ -87,16 +87,17 @@ class CrawlSiteTask(BaseTask):
             # Is this the domain we're looking at?
             # Netloc is empty (relative link) - or netloc == domain
             if not parsed_link.netloc:
-                yield urlunparse((SCHEME, self.domain, parsed_link.path, '', '', ''))
+                # print(parsed_link)
+                yield urlunparse((SCHEME, self.domain, parsed_link.path, '', parsed_link.query, ''))
             elif parsed_link.netloc in self.domain:
                 yield href    
     
 
     
 if __name__ == "__main__":    
-    domain = '127.0.0.1'
+    domain = 'gadus.myspecies.info'
     db_conn = mysql.connector.connect(
-            host='127.0.0.1',
+            host='157.140.2.164',
             port=3306,
             user=DB_USERNAME,
             password=DB_PASSWORD,

@@ -11,14 +11,18 @@ from selenium import webdriver
 import time
 from pathlib import Path
 import os
+from urllib.parse import parse_qs, unquote
+from collections import OrderedDict
 
 from selenium import webdriver 
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.select import Select
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from webdriver_manager.chrome import ChromeDriverManager
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 import requests
@@ -38,6 +42,9 @@ from htmlify.utils import get_soup, concat_path, is_decommisionned_link
 
 
 class PageTask(BaseTask):
+
+    # Compile the regex pattern
+    re_facet = re.compile(r'^f\[\d+\]$')
     url = luigi.Parameter()
     output_dir = luigi.PathParameter()
 
@@ -66,9 +73,15 @@ class PageTask(BaseTask):
 
         if self._is_tiny_tax(soup):
             logger.debug(f'Tiny tax delected {self.url} - expanding...')
-            chrome_options = Options()
-            chrome_options.add_argument("--headless=new") # for Chrome >= 109
-            driver = webdriver.Chrome(options=chrome_options)         
+            # chrome_options = Options()
+            # chrome_options.add_argument("--headless=new") # for Chrome >= 109
+            # driver = webdriver.Chrome(options=chrome_options)         
+
+            options = Options()
+            options.add_argument('--headless')
+            options.add_argument('--no-sandbox')
+            options.add_argument('--disable-dev-shm-usage')
+            driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)            
             driver.get(self.url)
 
             self._expand_tiny_tax(driver)
@@ -80,7 +93,7 @@ class PageTask(BaseTask):
         self.process_images(soup)
 
         self.replace_login(soup)
-        self.replace_decommisioned_links(soup)
+        self.process_links(soup)
         self.replace_search(soup)
         self.remove_messages(soup)
         self.remove_login_block(soup)
@@ -93,8 +106,9 @@ class PageTask(BaseTask):
             raise Exception(f'HTML file has no content: {self.url}')    
 
         # Create a new link tag for the stylesheet
-        new_stylesheet = soup.new_tag('link', rel='stylesheet', href='/assets/style.css')                
-        soup.head.append(new_stylesheet)
+        if soup.head:
+            new_stylesheet = soup.new_tag('link', rel='stylesheet', href='/assets/style.css')                
+            soup.head.append(new_stylesheet)
 
         self.parsed_path.mkdir(parents=True, exist_ok=True)
 
@@ -112,12 +126,12 @@ class PageTask(BaseTask):
     def parsed_path(self):
 
         if self.parsed_url.path:
-            return concat_path(self.output_dir, self.parsed_url.path)
+            path = self.resolve_url_to_path(self.parsed_url)
+            return concat_path(self.output_dir, str(path))
         else:
             return self.output_dir
 
     def output(self):
-        # format=luigi.format.Nop - Binary output
         return luigi.LocalTarget(self.parsed_path / 'index.html', format=luigi.format.Nop)
 
     def _is_tiny_tax(self, soup):
@@ -162,11 +176,50 @@ class PageTask(BaseTask):
 
             search_form.append(new_site_input)
 
-    def replace_decommisioned_links(self, soup): 
-        for a in soup.find_all('a', href=True):            
+    def process_links(self, soup):
+
+
+        # Loop through the links, ensuring they match the new static site structure
+        for a in soup.find_all('a', href=True):  
             href = a.get('href')
             if is_decommisionned_link(href):
                 a.decompose()
+                continue
+
+            parsed_url = urlparse(href)
+
+            if not self._is_site_internal_link(parsed_url):
+                continue
+
+            resolved_path = self.resolve_url_to_path(parsed_url)
+            a['href'] = resolved_path
+
+    def resolve_url_to_path(self, parsed_url):
+
+        path = Path(parsed_url.path)
+
+        if parsed_url.query:
+            decoded_query = unquote(parsed_url.query)
+            parsed_query = parse_qs(decoded_query)  
+            query_dict = {}
+            for key, value in parsed_query.items():
+                # print(value)
+                if self.re_facet.match(key):
+                    split_value = value[0].split(':')
+                    query_dict[split_value[0]] = split_value[1]
+
+                else:
+                    query_dict[key] = value[0]
+
+            sorted_query_dict = OrderedDict(sorted(query_dict.items()))
+            for key, value in sorted_query_dict.items():
+                path = path / key / value
+
+        return path
+
+    def _is_site_internal_link(self, parsed_url):           
+        # Is this link relative or for the current domain  
+        return not parsed_url.netloc or self.domain in parsed_url.netloc
 
     def replace_login(self, soup):      
         if login_div := soup.find('div', id='zone-slide-top-wrapper'):
@@ -216,7 +269,7 @@ class PageTask(BaseTask):
 
     def process_remote_file(self, url):
         parsed_url = urlparse(url)
-        # If the file has  domain that isn't the one we're processing
+        # If the file has domain that isn't the one we're processing
         # we'll keep the url exactly the same 
         if parsed_url.netloc and self.domain not in parsed_url.netloc:
             return False
@@ -232,11 +285,15 @@ class PageTask(BaseTask):
         else:
         
             dest_path.parent.mkdir(parents=True, exist_ok=True)
-            content = self._request_url(url)
 
-            with dest_path.open('wb') as f:
-                f.write(content)          
-
+            try:
+                content = self._request_url(url)
+            except requests.exceptions.HTTPError:
+                return None
+            else:
+                with dest_path.open('wb') as f:
+                    f.write(content)
+        
         return parsed_url.path  
     
     def process_images(self, soup):
@@ -287,13 +344,13 @@ class PageTask(BaseTask):
             return 'Search is temporarily unavailable' in main_content.get_text()
 
 if __name__ == "__main__":    
-    domain = '127.0.0.1'
     luigi.build([
         PageTask(
             # url='http://127.0.0.1/content/search2/', 
             # url='http://127.0.0.1/taxonomy/term/11/media',
-            url='http://127.0.0.1',
-            output_dir=Path('/Users/ben/Projects/Scratchpads/Sites/127.0.0.1'), 
+            url='http://gadus.myspecies.info/gallery?page=1',
+            # output_dir=Path('/Users/ben/Projects/Scratchpads/Sites/gadus.myspecies.info'), 
+            output_dir=Path('/var/www/gadus.myspecies.info'),
             force=True)
             ], 
         local_scheduler=True)           
