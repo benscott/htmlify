@@ -2,7 +2,7 @@ import luigi
 from bs4 import BeautifulSoup
 import requests
 import requests_cache
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse, urlunparse, urlencode
 import os.path
 import copy
 import re
@@ -13,16 +13,18 @@ from pathlib import Path
 import os
 from urllib.parse import parse_qs, unquote
 from collections import OrderedDict
+import json
 
-from selenium import webdriver 
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.select import Select
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
-from webdriver_manager.chrome import ChromeDriverManager
+# from selenium import webdriver 
+# from selenium.webdriver.chrome.options import Options
+# from selenium.webdriver.support.select import Select
+# from selenium.webdriver.chrome.service import Service
+# from selenium.webdriver.common.by import By
+# from selenium.webdriver.support.ui import WebDriverWait
+# from selenium.webdriver.support import expected_conditions as EC
+# from selenium.common.exceptions import TimeoutException, NoSuchElementException
+# from webdriver_manager.chrome import ChromeDriverManager
+# from selenium.common.exceptions import StaleElementReferenceException
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 import requests
@@ -32,12 +34,13 @@ import requests_cache
 import mysql.connector
 
 
-from htmlify.config import logger, SCHEME, USE_SELENIUM
+from htmlify.config import logger, SCHEME, USE_SELENIUM, SITES_DIR
 from htmlify.tasks.base import BaseTask
 from htmlify.tasks.crawl import CrawlSiteTask
 from htmlify.stack import UniqueStack
-from htmlify.utils import get_soup, concat_path, is_decommisionned_link
-
+from htmlify.utils import get_soup, concat_path, is_decommisionned_link, request, request_json
+from htmlify.url import URL
+from htmlify.db import db_manager
 
 
 
@@ -56,36 +59,32 @@ class PageTask(BaseTask):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)  
-        parsed_url = urlparse(self.url)
-        self.domain = parsed_url.netloc                 
+        self._url = URL(self.url)
+
+        if self._url.has_multiple_facets():
+            logger.error(f'Page {self.url} is a multiple facet page')
+
+        self.domain = self._url.domain               
 
     def run(self):
 
+        
 
         # # self.subdomain = parsed_url.netloc.replace('myspecies.info', '')
 
         soup = get_soup(self.url)
-        driver = None
 
-        # if self._is_unavailable_search_page(soup):
-        #     raise Exception('Empty search page - Search is temporarily unavailable')
+        if soup.find('h1', string="Technical difficulties"):
+            raise Exception("Technical difficulties")
 
+        if self._is_unavailable_search_page(soup):
+            raise Exception('Empty search page - Search is temporarily unavailable')
 
-        if self._is_tiny_tax(soup):
-            logger.debug(f'Tiny tax delected {self.url} - expanding...')
-            # chrome_options = Options()
-            # chrome_options.add_argument("--headless=new") # for Chrome >= 109
-            # driver = webdriver.Chrome(options=chrome_options)         
+        if self._is_tinytax(soup):
+            self.process_tinytax(soup)
 
-            options = Options()
-            options.add_argument('--headless')
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)            
-            driver.get(self.url)
-
-            self._expand_tiny_tax(driver)
-            soup = BeautifulSoup(driver.page_source, "html.parser")
+        if self._is_slickgrid(soup):
+            soup = self._load_slickgrid(soup)
 
         self.process_css_style_urls(soup)
         self.process_css(soup)
@@ -97,10 +96,18 @@ class PageTask(BaseTask):
         self.replace_search(soup)
         self.remove_messages(soup)
         self.remove_login_block(soup)
+        self.remove_comment_form(soup)
+        self.remove_eol_widgets(soup)
 
         self.contact_page_message(soup)
         self.search_page(soup)
         self.biblio_page(soup)
+        self.login_page(soup)
+
+        self.process_facets(soup)
+        self.disable_autocomplete(soup)
+
+        self.remove_feeds(soup)
 
         if not self._page_has_content(soup):
             raise Exception(f'HTML file has no content: {self.url}')    
@@ -112,49 +119,153 @@ class PageTask(BaseTask):
 
         self.parsed_path.mkdir(parents=True, exist_ok=True)
 
+        logger.debug(f"Saving page to {self.output().path}")
         with self.output().open('wb') as f: 
-            f.write(soup.encode('utf-8'))         
+            f.write(soup.encode('utf-8'))    
 
-        if driver:
-            driver.quit()
+    def disable_autocomplete(self, soup):            
+        autocomplete_els = soup.find_all(class_='autocomplete')
+        for el in autocomplete_els:
+            el.decompose()  
 
-    @property
-    def parsed_url(self):
-        return urlparse(self.url)
+    def remove_comment_form(self, soup):
+        if comment_form := soup.find('div', id='comments'):
+            comment_form.decompose()    
+
+    def remove_feeds(self, soup):
+        if feeds_div := soup.find(class_='feed-icon'):
+            feeds_div.decompose()  
+              
+    def remove_eol_widgets(self, soup):
+        eol_ids = [
+            'block-views-eol-images-block',
+            'block-views-eol-text-block'
+        ]
+        for eol_id in eol_ids:
+            if el := soup.find('section', id=eol_id):
+                el.decompose()                
+    
+    def process_facets(self, soup):
+        facet_blocks = soup.find_all('section', {"class": "block-facetapi"})
+
+        for facet_block in facet_blocks:
+
+            # Remove the search facet input
+            if facet_form := facet_block.find('form'):
+                facet_form.decompose()
+
+            ul = facet_block.find('ul', {"class": "facetapi-facetapi-links"})
+            # If we don't have links, remvoe the block
+            if not ul or not ul.find_all('a'):
+                facet_block.decompose()
+    
+    def _base_term_path(self, url):
+
+        # Define the regex pattern to match 'taxonomy/term/number'
+        pattern = r'(taxonomy/term/\d+)(?:/.*)?'
+        term_path = re.sub(pattern, r'\1', url)
+        if not term_path.startswith('/'):
+            term_path = f'/{term_path}'
+        return term_path
+                                    
+    def process_tinytax_links(self, soup):
+        tinytax_block = soup.find('section', {"class": "block-tinytax"})
+        tinytax_div = soup.find('div', {"class": "tinytax"})
+        tinytax_div['class'] = 'static-tinytax'
+
+        for a in tinytax_block.find_all('a', href=True):              
+            a['href'] = self._base_term_path(a['href'])
     
     @property
     def parsed_path(self):
-
-        if self.parsed_url.path:
-            path = self.resolve_url_to_path(self.parsed_url)
-            return concat_path(self.output_dir, str(path))
+        if path := self._url.to_path():
+            return concat_path(self.output_dir, path)
         else:
             return self.output_dir
 
     def output(self):
         return luigi.LocalTarget(self.parsed_path / 'index.html', format=luigi.format.Nop)
 
-    def _is_tiny_tax(self, soup):
+    def _is_tinytax(self, soup):
         return bool(soup.find('section', {"class": "block-tinytax"})) 
+    
+    def process_tinytax(self, soup):
 
-    def _expand_tiny_tax(self, driver):
+        logger.debug(f'Tiny tax detected {self.url} - expanding...')
 
-        active_link = driver.find_element(By.XPATH, '//div[@class="tinytax"]//a[contains(@class, "active") or contains(@class, "tinytax-bold")]')
+        tid = self._url.path.split('/')[-1]
+        tiny_tax_block = soup.find('section', {"class": "block-tinytax"})
+        block_id = tiny_tax_block.get('id').replace('block-', '')
 
-        try:
-            plus_img = active_link.find_element(By.XPATH, 'preceding-sibling::img[contains(@src,"plus.gif")]')
-        except NoSuchElementException:
-            print('Active tiny tax link doesn\'t have child elements to expand')
-        else:
-            self._click_tiny_tax(driver, plus_img)
+        tinytax = self.get_tinytax(block_id, tid)
+        tinytax_soup = BeautifulSoup(tinytax, 'html.parser')
+        # Find all <a> elements with the classes tinytax-bold and active
+        anchors = tinytax_soup.find_all('a', class_='tinytax-bold active')
 
-    def _click_tiny_tax(self, driver, plus_img):
-        driver.execute_script("arguments[0].click();", plus_img);   
-        try:
-            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.XPATH, '//div[@class="tinytax"]//a[contains(@class, "active") or contains(@class, "tinytax-bold")]//following-sibling::ul')))
-            print("Tinytax is ready!")            
-        except TimeoutException:            
-            print("Loading took too much time!")      
+        # Remove the classes from each found anchor
+        for anchor in anchors:
+            anchor['class'].remove('tinytax-bold')
+            anchor['class'].remove('active')            
+
+        active_element = tinytax_soup.find(id=f'tinytax-{tid}') 
+        active_element.find('a')['class'] = ['active', 'tinytax-bold']           
+        tiny_tax_block.replace_with(tinytax_soup)   
+
+    def get_tinytax(self, block_id, tid):
+
+        if child_tid := self.get_child_tid(tid):
+            return self.get_tinytax_block(block_id, child_tid)
+        
+        return self.get_tinytax_block(block_id, tid)
+
+    def get_tinytax_block(self, block_id, tid):
+
+        query_dict = {
+            'blocks': block_id,
+            'path': f'taxonomy/term/{tid}'
+        }
+        query = urlencode(query_dict)        
+
+        child_url = urlunparse((
+            self._url.scheme, 
+            self._url.domain, 
+            f'ajaxblocks', 
+            '', 
+            query,
+            ''
+        ))     
+
+        json = request_json(child_url) 
+        return json.get(block_id).get('content')
+    
+    def get_child_tid(self, tid):
+        sql = f"""
+            SELECT DISTINCT td.tid
+            FROM taxonomy_term_data td
+            INNER JOIN taxonomy_term_hierarchy th ON td.tid = th.tid
+            WHERE th.parent = {tid}
+        """     
+
+        result = db_manager.fetch(self.domain, sql)
+        for child_tid, in result:
+            child_url = urlunparse((
+                self._url.scheme, 
+                self._url.domain, 
+                f'taxonomy/term/{child_tid}', 
+                '', 
+                '',
+                ''
+            )) 
+
+            try:
+                get_soup(child_url)
+            except requests.exceptions.HTTPError:    
+                continue
+            else:
+                return child_tid             
+    
+    def _is_slickgrid(self, soup):
+        return bool(soup.find('div', {"class": "slickgrid-wrapper"}))         
 
     def replace_search(self, soup): 
         if search_form := soup.find('form', id="search-block-form"):
@@ -178,7 +289,6 @@ class PageTask(BaseTask):
 
     def process_links(self, soup):
 
-
         # Loop through the links, ensuring they match the new static site structure
         for a in soup.find_all('a', href=True):  
             href = a.get('href')
@@ -186,40 +296,17 @@ class PageTask(BaseTask):
                 a.decompose()
                 continue
 
-            parsed_url = urlparse(href)
+            url = URL(href, self.domain)
 
-            if not self._is_site_internal_link(parsed_url):
+            if not url.is_site_internal_link():
                 continue
 
-            resolved_path = self.resolve_url_to_path(parsed_url)
-            a['href'] = resolved_path
+            if url.has_multiple_facets():
+                logger.debug(f'Removing facet url {href}')
+                a.decompose()
+                continue
 
-    def resolve_url_to_path(self, parsed_url):
-
-        path = Path(parsed_url.path)
-
-        if parsed_url.query:
-            decoded_query = unquote(parsed_url.query)
-            parsed_query = parse_qs(decoded_query)  
-            query_dict = {}
-            for key, value in parsed_query.items():
-                # print(value)
-                if self.re_facet.match(key):
-                    split_value = value[0].split(':')
-                    query_dict[split_value[0]] = split_value[1]
-
-                else:
-                    query_dict[key] = value[0]
-
-            sorted_query_dict = OrderedDict(sorted(query_dict.items()))
-            for key, value in sorted_query_dict.items():
-                path = path / key / value
-
-        return path
-
-    def _is_site_internal_link(self, parsed_url):           
-        # Is this link relative or for the current domain  
-        return not parsed_url.netloc or self.domain in parsed_url.netloc
+            a['href'] = url.to_path()
 
     def replace_login(self, soup):      
         if login_div := soup.find('div', id='zone-slide-top-wrapper'):
@@ -280,19 +367,18 @@ class PageTask(BaseTask):
         if parsed_url.path.startswith('/sites'):
             if not dest_path.exists():                
                 logger.error(f'Sites file {dest_path} does not exist')
-
-        # File exists elsewhere in the filesystem - download it
-        else:
-        
-            dest_path.parent.mkdir(parents=True, exist_ok=True)
-
-            try:
-                content = self._request_url(url)
-            except requests.exceptions.HTTPError:
-                return None
             else:
-                with dest_path.open('wb') as f:
-                    f.write(content)
+                return parsed_url.path  
+
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            content = self._request_url(url)
+        except requests.exceptions.HTTPError:
+            return None
+        else:
+            with dest_path.open('wb') as f:
+                f.write(content)
         
         return parsed_url.path  
     
@@ -314,7 +400,7 @@ class PageTask(BaseTask):
             '', 
             ''
         ))
-        r = requests.get(url, allow_redirects=True)
+        r = request(url)
         r.raise_for_status()
         return r.content                
 
@@ -345,15 +431,115 @@ class PageTask(BaseTask):
     def _is_unavailable_search_page(self, soup):
         if main_content := soup.find('section', id='section-content'):
             return 'Search is temporarily unavailable' in main_content.get_text()
+        
+    def login_page(self, soup):
+        if main_content := soup.find('section', id='section-content'):
+            if login_form := main_content.find('form', id='user-login'):
+                login_form.replace_with('Login disabled')
+            if pass_form := main_content.find('form', id='user-pass'):
+                pass_form.replace_with('Login disabled')  
 
-if __name__ == "__main__":    
+
+    def _get_slickgrid_id(self, soup):
+        pattern = r'new Slickgrid\("\#(?P<div_id>\w+)", "(?P<slick_id>\w+)", "(?P<page>\w+)"\);'
+
+        for script in soup.find_all('script'):
+            for content in script.contents:
+                match = re.search(pattern, content)
+                if match:
+                    # FIXME: Get columns
+                    column_pattern = r'var columns\s*=\s*(\[\{.*?\}\])'
+                    
+                    column_match = re.search(column_pattern, content)
+                    if column_match:
+
+                        column_dict = json.loads(column_match.group(1))
+                        columns = [col.get('name') for col in column_dict] + ['ID']
+                    else:
+                        columns = None
+
+                    return match.group('slick_id'), columns
+
+    def _load_slickgrid(self, soup):
+
+        logger.debug('Slickgrid detected - replacing grid')
+
+        slickgrid_id, columns = self._get_slickgrid_id(soup)
+
+        if slickgrid_id:
+
+            slickgrid_wrapper = soup.find('div', {"class": "slickgrid-wrapper"})
+
+            slickgrid_url = urlunparse((
+                self._url.scheme, 
+                self._url.domain, 
+                f'slickgrid/get/data/{slickgrid_id}/0/100', 
+                '', 
+                '',
+                ''
+            ))     
+
+            json = request_json(slickgrid_url) 
+
+            data = json.get('data')
+            if not data:
+                logger.error('Could not load slickgrid data')
+                return
+
+            table = soup.new_tag('table', border="1")
+
+            # Create the table header
+            thead = soup.new_tag('thead')
+            tr = soup.new_tag('tr')
+
+            if not columns:
+                columns = data[0].keys()
+
+            # # Add headers to the header row
+            for col in columns:
+                th = soup.new_tag('th')
+                th.string = col
+                tr.append(th)
+
+            thead.append(tr)
+            table.append(thead)
+
+            # Create an empty table body
+            tbody = soup.new_tag('tbody')
+            table.append(tbody)       
+
+            for row in data:
+                tr = soup.new_tag('tr') 
+
+                for field, value in row.items():
+                    td = soup.new_tag('td')
+                    if "<a" in value:
+                        a = BeautifulSoup(value, "html.parser")
+                        td.append(a)
+                    else:
+                        td.string = value
+                    tr.append(td)
+                table.append(tr)            
+
+            slickgrid_wrapper.replace_with(table)            
+
+        if loading := soup.find(class_='loading-indicator'):
+            loading.decompose()      
+
+        return soup  
+
+if __name__ == "__main__":   
+
+    url='https://solanaceaesource.myspecies.info/collections'
+    domain = urlparse(url).netloc
+
     luigi.build([
         PageTask(
             # url='http://127.0.0.1/content/search2/', 
             # url='http://127.0.0.1/taxonomy/term/11/media',
-            url='http://gadus.myspecies.info/gallery?page=1',
+            url=url,
             # output_dir=Path('/Users/ben/Projects/Scratchpads/Sites/gadus.myspecies.info'), 
-            output_dir=Path('/var/www/gadus.myspecies.info'),
+            output_dir=SITES_DIR / domain,
             force=True)
             ], 
         local_scheduler=True)           

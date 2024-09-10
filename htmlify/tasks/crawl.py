@@ -17,16 +17,18 @@ from htmlify.tasks.base import BaseTask
 from htmlify.tasks.sitemap import SiteMapTask
 from htmlify.stack import UniqueStack
 from htmlify.utils import get_soup, is_decommisionned_link
+from htmlify.url import URL
 
 class CrawlSiteTask(BaseTask):
 
     domain = luigi.Parameter()
-    db_conn = luigi.Parameter()
+    # db_conn = luigi.Parameter()
     
     output_dir = PROCESSING_DATA_DIR / 'crawl'    
 
     def requires(self):
-        return SiteMapTask(domain=self.domain, db_conn=db_conn)
+        # return SiteMapTask(domain=self.domain, db_conn=self.db_conn)
+        return SiteMapTask(domain=self.domain)
     
     def run(self):
 
@@ -35,28 +37,54 @@ class CrawlSiteTask(BaseTask):
 
         sitemap_urls = [self._path_to_url(url) for url in sitemap]
 
+        # sitemap_urls = sitemap_urls[:10]
+
+        # sitemap_urls = ['https://aba.myspecies.info/biblio/author/tus_biblio_year/1937']
+
         url_stack = UniqueStack(sitemap_urls)
 
+        re_file = re.compile(r'file/[0-9]+$|file-colorboxed/[0-9]+$')
+
+        # url_stack = UniqueStack(['https://microgastrinae.myspecies.info/gallery'])
+
         for url in url_stack:
+
+            # No point crawling file pages
+            if re_file.search(url):
+                continue
+
+            logger.debug(f'Crawling {url} for links')
+
             try:
                 soup = get_soup(url)
-            except requests.HTTPError as e:
+            except Exception as e:
                 logger.warning(e)
                 url_stack.discard(url)        
             else:
+
+                if soup.find('h1', string="Technical difficulties"):
+                    logger.errot(f'Technical difficulties {url}') 
+                    continue
+                            
                 hrefs = self._page_get_hrefs(soup)
                 # Remove any trailing /s
                 hrefs = [re.sub('/+$', '', href) for href in hrefs]
                 # Filter out any hrefs we know we want to exclude
-                hrefs = [href for href in hrefs if not is_decommisionned_link(href)]
+                hrefs = [href for href in hrefs if not is_decommisionned_link(href)]   
+
+                before = set(url_stack._seen)
                 url_stack.update(hrefs)
-            
+                num_new = len(before) - len(url_stack._seen)
+
+                logger.debug(f'{num_new} new URLS added to stack (total {len(url_stack._seen)}). {len(url_stack._items)} URLs to process')
+
         print('NEW:')
         print(url_stack._seen.difference(sitemap_urls))
 
         print('Links found: ', len(url_stack))
 
         with self.output().open('w') as f: 
+            logger.debug(f'Crawl data outputted to {self.output().path}')
             yaml.dump(url_stack.items, f)        
 
     def output(self):
@@ -84,23 +112,21 @@ class CrawlSiteTask(BaseTask):
                 if extension and extension not in ['html', 'php']:
                     continue
 
-            # Is this the domain we're looking at?
-            # Netloc is empty (relative link) - or netloc == domain
-            if not parsed_link.netloc:
-                # print(parsed_link)
-                yield urlunparse((SCHEME, self.domain, parsed_link.path, '', parsed_link.query, ''))
-            elif parsed_link.netloc in self.domain:
-                yield href    
-    
+            # Skip search links with parameters
+            if 'search' in parsed_link.path and parsed_link.query:
+                continue
 
+            url = URL(href, self.domain)
+
+            if not url.is_site_internal_link():
+                continue
+
+            if url.is_faceted():
+                yield from url.get_single_facet_urls() 
+            else:
+                yield url.get_normalised()
     
 if __name__ == "__main__":    
-    domain = 'gadus.myspecies.info'
-    db_conn = mysql.connector.connect(
-            host='157.140.2.164',
-            port=3306,
-            user=DB_USERNAME,
-            password=DB_PASSWORD,
-            database='drupal'
-        )      
-    luigi.build([CrawlSiteTask(domain=domain, db_conn=db_conn, force=True)], local_scheduler=True)   
+    domain = 'agelenidsoftheworld.myspecies.info'
+    
+    luigi.build([CrawlSiteTask(domain=domain, force=True)], local_scheduler=True)   

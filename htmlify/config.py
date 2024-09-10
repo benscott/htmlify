@@ -9,6 +9,8 @@ load_dotenv(ROOT_DIR / '.env')
 
 DATA_DIR = Path(ROOT_DIR / 'data')
 
+ASSETS_DIR = Path(DATA_DIR / 'assets')
+
 PROCESSING_DATA_DIR = Path(DATA_DIR / 'processing')
 PROCESSING_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -18,8 +20,11 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 SITES_DIR = Path(os.getenv('SITES_DIR', '/Users/ben/Projects/Scratchpads/Sites'))
 SITES_DIR.mkdir(parents=True, exist_ok=True)
 
+APACHE_VHOSTS_DIR = Path('/etc/apache2/sites-available/')
+
+
 PLATFORMS_ROOT_PATH = os.getenv('PLATFORMS_ROOT_PATH')
-SCHEME = os.getenv('SCHEME', 'http')
+SCHEME = os.getenv('SCHEME', 'https')
 USE_SELENIUM = True
 
 

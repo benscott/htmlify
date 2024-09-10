@@ -13,6 +13,10 @@ classifiers = [
 [project.urls]
 "Homepage" = "https://github.com/benscott/htmlify"
 
+[build-system]
+requires = ["setuptools>=42", "wheel", "setuptools_scm[toml]>=6.0.1"]
+build-backend = "setuptools.build_meta"
+
 [tool.setuptools.packages.find]
 where = ["."]  # list of folders that contain the packages (["."] by default)
 include = ["htmlify"]  # package names should match these glob patterns (["*"] by default)

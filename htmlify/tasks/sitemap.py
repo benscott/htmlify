@@ -7,19 +7,17 @@ import pandas as pd
 
 
 from htmlify.config import PROCESSING_DATA_DIR, DB_USERNAME, DB_PASSWORD, logger
-from htmlify.tasks.base import BaseExternalTask
+from htmlify.tasks.base import BaseExternalTask, BaseTask
 from htmlify.tasks.sites_list import SitesListTask
+from htmlify.db import db_manager
 
-class SiteMapTask(BaseExternalTask):
+class SiteMapTask(BaseTask):
     
     domain = luigi.Parameter()
-    db_conn = luigi.Parameter()
+    # db_conn = luigi.Parameter()
     output_dir = PROCESSING_DATA_DIR / 'sitemaps'
 
     def run(self):
-
-        logger.debug(f'Connected: {self.db_conn.is_connected()}')
-        self.cursor = self.db_conn.cursor()
 
         default_urls = [
             "biblio",
@@ -47,27 +45,35 @@ class SiteMapTask(BaseExternalTask):
         ]
         urls = list(itertools.chain.from_iterable((urls)))
 
+        logger.debug(f'{len(urls)} found in sitemap')
+
         with self.output().open('w') as f: 
             yaml.dump(urls, f)
 
     def output(self):
         return luigi.LocalTarget(self.output_dir / f'{self.domain}.yaml')       
 
-    def _query(self, sql):
-        self.cursor.execute(sql)    
-        return self.cursor.fetchall()
-    
-    def _query_one(self, sql):
-        self.cursor.execute(sql)    
-        return self.cursor.fetchone()    
-    
     def _get_biological_vids(self):
         value = self._query_one(f'SELECT value FROM variable where name="biological_vids"')
         unserialized_data = phpserialize.loads(value[0])
         vids = [vid for vid, is_class in unserialized_data.items() if is_class]
-        return vids    
+        return vids   
 
+    def _query(self, sql): 
+        return db_manager.fetch(self.domain, sql)
+    
+    def _query_one(self, sql): 
+        return db_manager.fetch_one(self.domain, sql)    
+    
     def get_node_urls(self):
+
+        revisions_are_public = bool(self._query_one("""
+            SELECT 1
+            FROM role_permission
+            WHERE rid = 1
+            AND permission = 'view revisions'
+            LIMIT 1;     
+        """))   
 
         nodes = self._query("""
             SELECT n.nid, 
@@ -82,11 +88,11 @@ class SiteMapTask(BaseExternalTask):
         """)
         
         urls = []
-        
+
         for nid, has_revisions in nodes:
             urls.append(f'node/{nid}')
             urls.append(f'node/{nid}/view')
-            if has_revisions:
+            if revisions_are_public and has_revisions:
                 urls.append(f'node/{nid}/revisions')
                 urls.append(f'node/{nid}/revisions/view')
                 revisions = self._query(f'SELECT vid FROM node_revision WHERE nid="{nid}"')
@@ -146,10 +152,22 @@ class SiteMapTask(BaseExternalTask):
     
     def get_term_urls(self):
         bio_vids = self._get_biological_vids()
+
+        tax_revisions_are_public = bool(self._query_one("""
+            SELECT 1
+            FROM role_permission
+            WHERE rid = 1
+            AND permission = 'view taxonomy term revisions'
+            LIMIT 1;  
+        """))  
+
         urls = []
         result = self._query(f"SELECT tid, vid FROM taxonomy_term_data")
 
-        bio_tabs = ['overview', 'descriptions', 'literature', 'maps', 'media', 'specimens', 'revisions']
+        bio_tabs = ['overview', 'descriptions', 'literature', 'maps', 'media', 'specimens']
+
+        if tax_revisions_are_public:
+            bio_tabs.append('revisions')
 
         for tid, vid in result:
 
@@ -165,14 +183,14 @@ class SiteMapTask(BaseExternalTask):
         return urls    
 
 if __name__ == "__main__":    
-    domain = '127.0.0.1'
+    domain = 'gadus.myspecies.info'
 
-    db_conn = mysql.connector.connect(
-            host='127.0.0.1',
-            port=3306,
-            user=DB_USERNAME,
-            password=DB_PASSWORD,
-            database='drupal'
-        )      
+    # db_conn = mysql.connector.connect(
+    #         host='157.140.2.164',
+    #         port=3306,
+    #         user=DB_USERNAME,
+    #         password=DB_PASSWORD,
+    #         database='abamyspeciesin_0'
+    #     )      
 
-    luigi.build([SiteMapTask(domain=domain, db_conn=db_conn, force=True)], local_scheduler=True)    
+    luigi.build([SiteMapTask(domain=domain, force=True)], local_scheduler=True)    

@@ -27,7 +27,7 @@ class SitesListTask(BaseExternalTask):
         df.to_csv(self.output().path, index=False)
     
     def output(self):
-        return luigi.LocalTarget(PROCESSING_DATA_DIR / 'sites-list.csv')       
+        return luigi.LocalTarget(DATA_DIR / 'sites-list.csv')       
 
 
 

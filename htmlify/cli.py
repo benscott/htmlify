@@ -5,7 +5,7 @@ cli = typer.Typer()
 
 @cli.command("convert")
 def convert():
-    print('statc')
+    print('static')
 
 
 if __name__ == "__main__":

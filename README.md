@@ -1,6 +1,8 @@
 # htmlify
 Convert Scratchpads to HTML
 
+pip install -e .
+
 ## Apache
 
 https://www.digitalocean.com/community/tutorials/how-to-install-the-apache-web-server-on-ubuntu-22-04
