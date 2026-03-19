@@ -54,7 +54,8 @@ class SiteMapTask(BaseTask):
         return luigi.LocalTarget(self.output_dir / f'{self.domain}.yaml')       
 
     def _get_biological_vids(self):
-        value = self._query_one(f'SELECT value FROM variable where name="biological_vids"')
+        value =self._query_one(f'SELECT value FROM variable where name="biological_vids"')        
+        if not value: return []
         unserialized_data = phpserialize.loads(value[0])
         vids = [vid for vid, is_class in unserialized_data.items() if is_class]
         return vids   
@@ -164,7 +165,7 @@ class SiteMapTask(BaseTask):
         urls = []
         result = self._query(f"SELECT tid, vid FROM taxonomy_term_data")
 
-        bio_tabs = ['overview', 'descriptions', 'literature', 'maps', 'media', 'specimens']
+        bio_tabs = ['descriptions', 'literature', 'maps', 'media', 'specimens']
 
         if tax_revisions_are_public:
             bio_tabs.append('revisions')

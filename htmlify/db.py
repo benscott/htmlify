@@ -8,7 +8,7 @@ class DBConnectionManager:
     def __init__(self):
 
         # Load the hosts data
-        df = pd.read_csv(DATA_DIR / 'sites-list.csv', usecols=['domain', 'db_name', 'db_host'])
+        df = pd.read_csv(DATA_DIR / 'vhosts.csv', usecols=['domain', 'db_name', 'db_host'])
         self._sites = df.set_index('domain')[['db_name','db_host']]
         self._connections = {}  # Dictionary to hold multiple connections
 
@@ -26,14 +26,14 @@ class DBConnectionManager:
 
             db_name, db_host = self. _get_site(domain)
 
-            DB_USERNAME = 'root'
-            db_host = '127.0.0.1'            
+            # DB_USERNAME = 'root'
+            # db_host = '127.0.0.1'            
 
             connection = mysql.connector.connect(
                 host=db_host,
                 port=3306,
                 user=DB_USERNAME,
-                # password=DB_PASSWORD,
+                password=DB_PASSWORD,
                 database=db_name
             )     
 

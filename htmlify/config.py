@@ -31,6 +31,8 @@ USE_SELENIUM = True
 DB_USERNAME = os.getenv('DB_USERNAME')
 DB_PASSWORD = os.getenv('DB_PASSWORD')
 
+CRAWL_SITES = False
+
 
 # Set up logging - inherit from luigi so we use the same interface
 logger = logging.getLogger('luigi-interface')

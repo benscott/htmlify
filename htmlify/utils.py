@@ -8,6 +8,7 @@ import urllib
 from operator import itemgetter
 
 from htmlify.config import DATA_DIR
+from htmlify.db import db_manager
 
 session = requests_cache.CachedSession(DATA_DIR / '.cache')
 
@@ -71,17 +72,29 @@ def get_first_directory(path):
     for part in parts:
         if part != path.anchor:
             return Path(path.anchor) / part
+        
+def get_site_aliases(domain):
+    sql = "SELECT alias, source FROM url_alias"
+    return db_manager.fetch(domain, sql)
 
+
+def is_under_maintenance(domain):
+    url = f'http://{domain}'
+    r = requests.get(url)
+    if r.status_code == 503 and 'Site under maintenance' in r.text:
+        return True
 
 if __name__ == "__main__":
-    links = [
-        'https://acanthaceae.myspecies.info/sites/acanthaceae.myspecies.info/files/filesq9hmR',
-        'https://acanthaceae.myspecies.info/taxonomy/term/149%2B150%2B151%2B152%2B153%2B154%2B155%2B156%2B157%2B158%2B159%2B160%2B161%2B162%2B163%2B164%2B165%2B166%2B167%2B168%2B169%2B170%2B171%2B172%2B173%2B174%2B175%2B176%2B177%2B178%2B179%2B180%2B181%2B182%2B183%2B184%2B185%2B186%2B187%2B188%2B189%2B190%2B191/xml',
-        'https://acanthaceae.myspecies.info/slickgrid/get/form/slickgrid_export_form',
-        'https://acanthaceae.myspecies.info/modal_forms/nojs/contact/1',
-        'https://acanthaceae.myspecies.info/modal_formsraw-plain/nojs/contact/1',
-        'https://acanthaceae.myspecies.info/sites/acanthaceae.myspecies.info/files/fileD2BJK7'
-    ] 
-    for link in links:
-        print(link)
-        print(is_decommisionned_link(link))
+    x = is_under_maintenance('dipteratyoryhma.myspecies.info')
+    print(x)
+    # links = [
+    #     'https://acanthaceae.myspecies.info/sites/acanthaceae.myspecies.info/files/filesq9hmR',
+    #     'https://acanthaceae.myspecies.info/taxonomy/term/149%2B150%2B151%2B152%2B153%2B154%2B155%2B156%2B157%2B158%2B159%2B160%2B161%2B162%2B163%2B164%2B165%2B166%2B167%2B168%2B169%2B170%2B171%2B172%2B173%2B174%2B175%2B176%2B177%2B178%2B179%2B180%2B181%2B182%2B183%2B184%2B185%2B186%2B187%2B188%2B189%2B190%2B191/xml',
+    #     'https://acanthaceae.myspecies.info/slickgrid/get/form/slickgrid_export_form',
+    #     'https://acanthaceae.myspecies.info/modal_forms/nojs/contact/1',
+    #     'https://acanthaceae.myspecies.info/modal_formsraw-plain/nojs/contact/1',
+    #     'https://acanthaceae.myspecies.info/sites/acanthaceae.myspecies.info/files/fileD2BJK7'
+    # ] 
+    # for link in links:
+    #     print(link)
+    #     print(is_decommisionned_link(link))

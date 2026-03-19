@@ -30,7 +30,8 @@ class MigrateTask(BaseTask):
         'solanaceaesource.myspecies.info',
         'sphingidae.myspecies.info',  
         'wallacefund.myspecies.info',
-        'wallaceletters.myspecies.info'      
+        'wallaceletters.myspecies.info',
+        'acoela.myspecies.info'      
     ]
     
     def requires(self):
@@ -102,6 +103,8 @@ class MigrateTask(BaseTask):
                 logger.debug(f'Resolved domain {domain} to {resolved_domain}')
                 return resolved_domain
 
+
 if __name__ == "__main__":    
     # domain = 'acanthaceae.myspecies.info'
-    luigi.build([MigrateTask(force=True, limit=10)], local_scheduler=True, workers=10)    
+
+    luigi.build([MigrateTask(force=True, limit=5)], local_scheduler=True, workers=10)    

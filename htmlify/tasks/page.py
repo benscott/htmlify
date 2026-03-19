@@ -193,19 +193,34 @@ class PageTask(BaseTask):
 
         logger.debug(f'Tiny tax detected {self.url} - expanding...')
 
-        tid = self._url.path.split('/')[-1]
+        tiny_tax_block = soup.find('section', {"class": "block-tinytax"})
+
+        # Extract the class attribute
+        body_class = soup.body.get('class', [])
+        # Join the class list into a single string (if it's a list)
+        body_class_str = ' '.join(body_class)
+
+        # Regular expression to extract the number after 'page-taxonomy-term-'
+        pattern = r'page-(?:taxonomy|nontaxonomy|simpletaxonomy)-term-(\d+)'
+
+        # Search for the pattern in the class attribute string
+        match = re.search(pattern, body_class_str)        
+
+        tid = match.group(1)
+
         tiny_tax_block = soup.find('section', {"class": "block-tinytax"})
         block_id = tiny_tax_block.get('id').replace('block-', '')
 
         tinytax = self.get_tinytax(block_id, tid)
         tinytax_soup = BeautifulSoup(tinytax, 'html.parser')
         # Find all <a> elements with the classes tinytax-bold and active
-        anchors = tinytax_soup.find_all('a', class_='tinytax-bold active')
+        active_a = tinytax_soup.find_all('a', class_='tinytax-bold')
 
         # Remove the classes from each found anchor
-        for anchor in anchors:
-            anchor['class'].remove('tinytax-bold')
-            anchor['class'].remove('active')            
+        for a in active_a:
+            a['class'].remove('tinytax-bold')
+            if 'active' in a.get('class', []):
+                a['class'].remove('active')            
 
         active_element = tinytax_soup.find(id=f'tinytax-{tid}') 
         active_element.find('a')['class'] = ['active', 'tinytax-bold']           
@@ -360,6 +375,9 @@ class PageTask(BaseTask):
         # we'll keep the url exactly the same 
         if parsed_url.netloc and self.domain not in parsed_url.netloc:
             return False
+        
+        if parsed_url.netloc.startswith('www'):
+            url = url.replace('www.', '')
 
         dest_path = concat_path(self.output_dir, parsed_url.path)
 
@@ -483,8 +501,8 @@ class PageTask(BaseTask):
 
             data = json.get('data')
             if not data:
-                logger.error('Could not load slickgrid data')
-                return
+                logger.error(f'Could not load slickgrid data {slickgrid_url}')
+                return soup
 
             table = soup.new_tag('table', border="1")
 
@@ -513,7 +531,7 @@ class PageTask(BaseTask):
 
                 for field, value in row.items():
                     td = soup.new_tag('td')
-                    if "<a" in value:
+                    if "<" in value:
                         a = BeautifulSoup(value, "html.parser")
                         td.append(a)
                     else:
@@ -530,7 +548,7 @@ class PageTask(BaseTask):
 
 if __name__ == "__main__":   
 
-    url='https://solanaceaesource.myspecies.info/collections'
+    url='https://acoela.myspecies.info/en/biblio?f%5B0%5D=im_field_taxonomic_name%3A11994'
     domain = urlparse(url).netloc
 
     luigi.build([

@@ -32,13 +32,13 @@ import requests_cache
 import mysql.connector
 
 
-from htmlify.config import SITES_DIR, ASSETS_DIR, DB_PASSWORD, DB_USERNAME, PLATFORMS_ROOT_PATH, APACHE_VHOSTS_DIR, logger
+from htmlify.config import CRAWL_SITES, SITES_DIR, ASSETS_DIR, DB_PASSWORD, DB_USERNAME, PLATFORMS_ROOT_PATH, APACHE_VHOSTS_DIR, logger
 from htmlify.tasks.base import BaseTask
 from htmlify.tasks.crawl import CrawlSiteTask
 from htmlify.tasks.page import PageTask
 from htmlify.stack import UniqueStack
 from htmlify.utils import get_soup, get_first_directory
-from htmlify.tasks.sites_list import SitesListTask
+from htmlify.tasks.sitemap import SiteMapTask
 from htmlify.url import URL
 
 
@@ -46,25 +46,7 @@ class SiteTask(BaseTask):
 
     domain = luigi.Parameter()
     platform_path = luigi.PathParameter()
-    # db_name = luigi.Parameter()
-    # db_host = luigi.Parameter()
-    # connection = None
 
-    # def __init__(self,  *args, **kwargs):
-    #     super().__init__(*args, **kwargs)  
-    #     self.connection = mysql.connector.connect(
-    #         host=self.db_host,
-    #         port=3306,
-    #         user=DB_USERNAME,
-    #         password=DB_PASSWORD,
-    #         database=self.db_name
-    #     )
-    #     if not self.connection.is_connected():
-    #         raise ConnectionError()
-
-    # def __del__(self):
-    #     if self.connection:
-    #         self.connection.close()
 
     def requires(self):      
 
@@ -72,13 +54,13 @@ class SiteTask(BaseTask):
 
         # We have to do the dynamic dependencies this way, as if we put tasks
         # in run we get the error
-        # crawl_task = CrawlSiteTask(domain=self.domain, db_conn=self.connection)
-        crawl_task = CrawlSiteTask(domain=self.domain)
-        luigi.build([crawl_task], local_scheduler=True)
-        # We don;t have t yield this - but keeps the dependency graph accurate
-        yield crawl_task
+        task = CrawlSiteTask(domain=self.domain)
+        luigi.build([task], local_scheduler=True)
         
-        with crawl_task.output().open() as f:
+        # We don;t have t yield this - but keeps the dependency graph accurate
+        yield task
+        
+        with task.output().open() as f:
             links = yaml.full_load(f)
             for link in links:
                 if self.url_is_valid_filename(link):
@@ -136,8 +118,6 @@ class SiteTask(BaseTask):
         with vhosts_path.open('w') as outf:
             outf.write(content)            
 
-
-
     def output(self):
         return luigi.LocalTarget(SITES_DIR / self.domain)
 
@@ -157,7 +137,7 @@ class SiteTask(BaseTask):
 if __name__ == "__main__":    
 
     # sites_list_task = SitesListTask()
-    domain = 'acanthaceae.myspecies.info'
+    domain = 'gadus.myspecies.info'
     luigi.build([
         SiteTask(
             domain=domain, 
