@@ -37,17 +37,24 @@ from htmlify.tasks.base import BaseTask
 from htmlify.tasks.crawl import CrawlSiteTask
 from htmlify.tasks.page import PageTask
 from htmlify.stack import UniqueStack
-from htmlify.utils import get_soup, get_first_directory
+from htmlify.utils import get_soup, get_first_directory, get_site_aliases, is_under_maintenance
 from htmlify.tasks.sitemap import SiteMapTask
 from htmlify.url import URL
+from htmlify.db import db_manager
 
+
+MAX_PAGE_THRESHOLD = 10000
 
 class SiteTask(BaseTask):
 
     domain = luigi.Parameter()
     platform_path = luigi.PathParameter()
 
-
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)  
+        if is_under_maintenance(self.domain):
+            raise Exception(f'{self.domain} is under maintenance')
+    
     def requires(self):      
 
         self.setup()
@@ -57,11 +64,15 @@ class SiteTask(BaseTask):
         task = CrawlSiteTask(domain=self.domain)
         luigi.build([task], local_scheduler=True)
         
-        # We don;t have t yield this - but keeps the dependency graph accurate
+        # We don't have to yield this - but keeps the dependency graph accurate
         yield task
         
         with task.output().open() as f:
             links = yaml.full_load(f)
+
+            if MAX_PAGE_THRESHOLD and len(links) > MAX_PAGE_THRESHOLD:
+                raise Exception(f'Links exceed {MAX_PAGE_THRESHOLD} maximum {len(links)}')
+
             for link in links:
                 if self.url_is_valid_filename(link):
                     yield PageTask(url=link, output_dir=self.output().path)    
@@ -118,6 +129,23 @@ class SiteTask(BaseTask):
         with vhosts_path.open('w') as outf:
             outf.write(content)            
 
+    def run(self):
+        logger.debug(f'Creating symlinks')
+        sites_dir = Path(self.output().path)
+        for alias, path in get_site_aliases(self.domain):
+
+            symlink_path = sites_dir / alias
+            target_path = sites_dir / path
+            symlink_path.parent.mkdir(parents=True, exist_ok=True)
+
+            if symlink_path.is_symlink():
+                resolved_path = symlink_path.resolve()
+                if resolved_path != target_path:
+                    symlink_path.unlink()
+                    symlink_path.symlink_to(target_path)
+            else:
+                symlink_path.symlink_to(target_path)
+
     def output(self):
         return luigi.LocalTarget(SITES_DIR / self.domain)
 
@@ -129,7 +157,25 @@ class SiteTask(BaseTask):
                     return False
         except FileNotFoundError:
             return False
+        
+        sites_dir = Path(self.output().path)
 
+        # Ensure symlinks (site aliases) all exist
+        for alias, path in get_site_aliases(self.domain):
+
+            symlink_path = sites_dir / alias
+            target_path = sites_dir / path
+
+            if not symlink_path.is_symlink():
+                 logger.error(f'ALIAS {symlink_path} does not exist')
+                 return False
+
+            if not target_path.exists():
+                logger.error(f'Target of alias {target_path} does not exist')
+                return False
+            
+        db_manager.close_connection(self.domain)
+            
         return True
     
 
@@ -137,7 +183,7 @@ class SiteTask(BaseTask):
 if __name__ == "__main__":    
 
     # sites_list_task = SitesListTask()
-    domain = 'gadus.myspecies.info'
+    domain = 'dipteratyoryhma.myspecies.info'
     luigi.build([
         SiteTask(
             domain=domain, 

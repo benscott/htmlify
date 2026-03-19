@@ -20,6 +20,7 @@ class SiteMapTask(BaseTask):
     def run(self):
 
         default_urls = [
+            "",
             "biblio",
             "gallery",
             "legal",
@@ -28,7 +29,9 @@ class SiteMapTask(BaseTask):
             "contact/1",
             "contact/2",
             "user",
-            "user/register",
+            # Removed as this can be disabled, and no longer needed
+            # Added to decommisioned links
+            # "user/register",
             "user/password",            
         ]
 
@@ -40,9 +43,12 @@ class SiteMapTask(BaseTask):
             self.get_image_urls(),
             self.get_user_urls(),
             self.get_comment_urls(),
-            self.get_public_aliases_urls(),
+            self.get_blog_urls(),
+            # BUGFIX: Moved to crating symlinks
+            # self.get_public_aliases_urls(),
             self.get_term_urls()
         ]
+        
         urls = list(itertools.chain.from_iterable((urls)))
 
         logger.debug(f'{len(urls)} found in sitemap')
@@ -51,7 +57,7 @@ class SiteMapTask(BaseTask):
             yaml.dump(urls, f)
 
     def output(self):
-        return luigi.LocalTarget(self.output_dir / f'{self.domain}.yaml')       
+        return luigi.LocalTarget(self.output_dir / f'{self.domain}.yaml')   
 
     def _get_biological_vids(self):
         value =self._query_one(f'SELECT value FROM variable where name="biological_vids"')        
@@ -68,38 +74,16 @@ class SiteMapTask(BaseTask):
     
     def get_node_urls(self):
 
-        revisions_are_public = bool(self._query_one("""
-            SELECT 1
-            FROM role_permission
-            WHERE rid = 1
-            AND permission = 'view revisions'
-            LIMIT 1;     
-        """))   
-
         nodes = self._query("""
-            SELECT n.nid, 
-                (CASE WHEN rev_count.revision_count > 1 THEN 1 ELSE 0 END) AS has_revisions
+            SELECT n.nid, n.type 
             FROM node n
-            LEFT JOIN (
-            SELECT nid, COUNT(vid) AS revision_count
-            FROM node_revision
-            GROUP BY nid
-            ) rev_count ON n.nid = rev_count.nid
             WHERE n.status = 1
         """)
         
         urls = []
 
-        for nid, has_revisions in nodes:
-            urls.append(f'node/{nid}')
-            urls.append(f'node/{nid}/view')
-            if revisions_are_public and has_revisions:
-                urls.append(f'node/{nid}/revisions')
-                urls.append(f'node/{nid}/revisions/view')
-                revisions = self._query(f'SELECT vid FROM node_revision WHERE nid="{nid}"')
-                for vid in revisions:
-                    urls.append(f'node/{nid}/revisions/{vid[0]}')
-                    urls.append(f'node/{nid}/revisions/{vid[0]}/view')
+        for nid, node_type in nodes:
+            urls.append(f'node/{nid}')            
 
         return urls
     
@@ -131,9 +115,16 @@ class SiteMapTask(BaseTask):
         result = self._query(f"SELECT c.cid, c.nid FROM comment c INNER JOIN node n ON c.nid = n.nid WHERE c.status = 1 AND n.status = 1")
         for cid, nid in result:
             urls.append(f'comment/{cid}')
-            urls.append(f'comment/{cid}/view')
 
         return urls
+    
+    def get_blog_urls(self):
+        urls = []
+        result = self._query(f"SELECT distinct(u.uid) FROM users_roles ur JOIN role_permission rp ON ur.rid = rp.rid JOIN users u ON ur.uid = u.uid WHERE rp.permission = 'create blog content' and u.status=1")
+        for uid in result:
+            urls.append(f'blog/{uid[0]}')
+
+        return urls    
     
     def get_user_urls(self):
         urls = []
@@ -154,26 +145,16 @@ class SiteMapTask(BaseTask):
     def get_term_urls(self):
         bio_vids = self._get_biological_vids()
 
-        tax_revisions_are_public = bool(self._query_one("""
-            SELECT 1
-            FROM role_permission
-            WHERE rid = 1
-            AND permission = 'view taxonomy term revisions'
-            LIMIT 1;  
-        """))  
-
         urls = []
-        result = self._query(f"SELECT tid, vid FROM taxonomy_term_data")
+        # Remove the two inbuilt taxonomies
+        result = self._query(f"SELECT td.tid, td.vid FROM taxonomy_term_data td INNER JOIN taxonomy_vocabulary v on v.vid=td.vid where v.name != 'Imaging technique' and v.name != 'Preperation technique'")
 
-        bio_tabs = ['descriptions', 'literature', 'maps', 'media', 'specimens']
-
-        if tax_revisions_are_public:
-            bio_tabs.append('revisions')
+        bio_tabs = ['literature', 'maps', 'media', 'specimens']
 
         for tid, vid in result:
 
             urls.append(f'taxonomy/term/{tid}')
-            urls.append(f'taxonomy/term/{tid}/view')
+
             if vid in bio_vids:
                 for tab in bio_tabs:
                     urls.append(f'taxonomy/term/{tid}/{tab}')
@@ -184,7 +165,7 @@ class SiteMapTask(BaseTask):
         return urls    
 
 if __name__ == "__main__":    
-    domain = 'gadus.myspecies.info'
+    domain = 'abrusinthailand.myspecies.info'
 
     # db_conn = mysql.connector.connect(
     #         host='157.140.2.164',

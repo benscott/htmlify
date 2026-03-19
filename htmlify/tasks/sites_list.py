@@ -6,7 +6,7 @@ import yaml
 import pandas as pd
 
 
-from htmlify.config import DATA_DIR, PROCESSING_DATA_DIR
+from htmlify.config import DATA_DIR, PROCESSING_DATA_DIR, logger
 from htmlify.tasks.base import BaseExternalTask, BaseTask
 
 class SitesListTask(BaseExternalTask):
@@ -23,8 +23,18 @@ class SitesListTask(BaseExternalTask):
                 return aliases.alias.values[0]
             return row.domain
         
-        df.resolved_domain = df.apply(_get_resolved_domain, axis=1)
+        df['resolved_domain'] = df.apply(_get_resolved_domain, axis=1)
+
+        # None of the emonocot domains resolve
+        df = df[~df.domain.str.contains('.e-monocot.org')]
+
+        # Remove any non-myspecies.info sites
+        df = df[df.resolved_domain.str.contains('myspecies.info')]
+
+        logger.info(f'{len(df)} sites')
         df.to_csv(self.output().path, index=False)
+
+        # print(df)
     
     def output(self):
         return luigi.LocalTarget(DATA_DIR / 'sites-list.csv')       

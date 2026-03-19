@@ -2,6 +2,7 @@ import urllib
 from operator import itemgetter
 from pathlib import Path
 import re
+import os
 
 from htmlify.config import logger
 
@@ -21,7 +22,7 @@ class URL:
 
         self.domain = domain
         
-        self.path = self.parsed_url.path.rstrip('/')        
+        self.path = self.parsed_url.path.rstrip('/') if self.parsed_url.path else None        
         self.scheme = self.parsed_url.scheme if self.parsed_url.scheme else self.default_scheme      
         
         self.parsed_query = self._parse_query(self.parsed_url)
@@ -99,6 +100,9 @@ class URL:
                     path = path / key / value
 
         return str(path)
+    
+    def extension(self):
+        return os.path.splitext(self.path)[1]
     
     def __repr__(self):
         return self._url

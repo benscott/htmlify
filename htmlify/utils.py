@@ -17,6 +17,11 @@ links = [
     r'biblio_search_export/[a-z]+',
     r'taxonomy/term/[0-9]+/feed',
     r'blog/[0-9]+/feed',
+    r'node/[0-9]+/view',
+    r'node/[0-9]+/revisions',
+    r'taxonomy/term/[0-9]+/revisions',
+    r'taxonomy/term/[0-9]+/view',
+    r'comment/[0-9]+/view',
     r'comment/reply/[0-9]+',
     r'user/[0-9]+/contact',
     r'rss\.xml',
@@ -28,7 +33,8 @@ links = [
     r'files/file[a-zA-Z0-9]+$',
     r'xml$',
     r'raw-plain',
-    r'slickgrid_export_form'
+    r'slickgrid_export_form',
+    r'user/register'
 ]    
 
 links_with_domain = [f'(?:https?://[^/]+/)?/?{l}' for l in links]
@@ -72,11 +78,10 @@ def get_first_directory(path):
     for part in parts:
         if part != path.anchor:
             return Path(path.anchor) / part
-        
+
 def get_site_aliases(domain):
     sql = "SELECT alias, source FROM url_alias"
     return db_manager.fetch(domain, sql)
-
 
 def is_under_maintenance(domain):
     url = f'http://{domain}'
@@ -87,14 +92,3 @@ def is_under_maintenance(domain):
 if __name__ == "__main__":
     x = is_under_maintenance('dipteratyoryhma.myspecies.info')
     print(x)
-    # links = [
-    #     'https://acanthaceae.myspecies.info/sites/acanthaceae.myspecies.info/files/filesq9hmR',
-    #     'https://acanthaceae.myspecies.info/taxonomy/term/149%2B150%2B151%2B152%2B153%2B154%2B155%2B156%2B157%2B158%2B159%2B160%2B161%2B162%2B163%2B164%2B165%2B166%2B167%2B168%2B169%2B170%2B171%2B172%2B173%2B174%2B175%2B176%2B177%2B178%2B179%2B180%2B181%2B182%2B183%2B184%2B185%2B186%2B187%2B188%2B189%2B190%2B191/xml',
-    #     'https://acanthaceae.myspecies.info/slickgrid/get/form/slickgrid_export_form',
-    #     'https://acanthaceae.myspecies.info/modal_forms/nojs/contact/1',
-    #     'https://acanthaceae.myspecies.info/modal_formsraw-plain/nojs/contact/1',
-    #     'https://acanthaceae.myspecies.info/sites/acanthaceae.myspecies.info/files/fileD2BJK7'
-    # ] 
-    # for link in links:
-    #     print(link)
-    #     print(is_decommisionned_link(link))

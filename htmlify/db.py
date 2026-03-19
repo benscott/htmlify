@@ -1,6 +1,7 @@
 import mysql.connector
 import atexit
 import pandas as pd
+import typer
 
 from htmlify.config import DATA_DIR, DB_USERNAME, DB_PASSWORD
 
@@ -69,7 +70,7 @@ class DBConnectionManager:
             cursor.close()
             connection.close()
             del self._connections[domain]
-            print(f"Database connection to {domain} closed.")
+            typer.secho(f"Database connection to {domain} closed.", fg=typer.colors.RED)
         else:
             print(f"No active connection to {domain} found.")
 

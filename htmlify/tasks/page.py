@@ -103,6 +103,7 @@ class PageTask(BaseTask):
         self.search_page(soup)
         self.biblio_page(soup)
         self.login_page(soup)
+        self.node_page(soup)
 
         self.process_facets(soup)
         self.disable_autocomplete(soup)
@@ -457,6 +458,10 @@ class PageTask(BaseTask):
             if pass_form := main_content.find('form', id='user-pass'):
                 pass_form.replace_with('Login disabled')  
 
+    def node_page(self, soup):
+        if soup.find('body', class_='page-node'):
+            if tabs := soup.find('div', class_='tabs'):
+                tabs.decompose() 
 
     def _get_slickgrid_id(self, soup):
         pattern = r'new Slickgrid\("\#(?P<div_id>\w+)", "(?P<slick_id>\w+)", "(?P<page>\w+)"\);'
@@ -548,7 +553,7 @@ class PageTask(BaseTask):
 
 if __name__ == "__main__":   
 
-    url='https://acoela.myspecies.info/en/biblio?f%5B0%5D=im_field_taxonomic_name%3A11994'
+    url='https://aframomum.myspecies.info/specimen_observation/csv'
     domain = urlparse(url).netloc
 
     luigi.build([

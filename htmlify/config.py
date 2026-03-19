@@ -50,3 +50,12 @@ logger.addHandler(file_handler)
 debug_file_handler = logging.FileHandler(LOG_DIR / 'debug.log')
 debug_file_handler.setLevel(logging.DEBUG)
 logger.addHandler(debug_file_handler)
+
+# Set up file logging for errors and warnings
+critical_file_handler = logging.FileHandler(LOG_DIR / 'critical.log')
+critical_file_handler.setFormatter(
+    logging.Formatter("[%(asctime)s] {%(filename)s:%(lineno)d} %(levelname)s - %(message)s")
+)
+# Log errors to files
+critical_file_handler.setLevel(logging.CRITICAL)
+logger.addHandler(critical_file_handler)
