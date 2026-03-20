@@ -46,9 +46,9 @@ def is_decommisionned_link(link):
 
 def request(url, cached=True):
     if cached:
-        r = session.get(url, allow_redirects=True)
+        r = session.get(url, allow_redirects=True, verify=False)
     else:
-        r = requests.get(url, allow_redirects=True)
+        r = requests.get(url, allow_redirects=True, verify=False)
 
     r.raise_for_status()    
     return r
