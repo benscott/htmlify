@@ -200,6 +200,7 @@ if __name__ == "__main__":
 
     # sites_list_task = SitesListTask()
     domain = 'dipteratyoryhma.myspecies.info'
+    domain = 'tabanidae.myspecies.info'
     luigi.build([
         SiteTask(
             domain=domain, 
