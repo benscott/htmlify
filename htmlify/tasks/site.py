@@ -32,7 +32,7 @@ import requests_cache
 import mysql.connector
 
 
-from htmlify.config import CRAWL_SITES, SITES_DIR, ASSETS_DIR, DB_PASSWORD, DB_USERNAME, PLATFORMS_ROOT_PATH, APACHE_VHOSTS_DIR, logger
+from htmlify.config import CRAWL_SITES, SITES_DIR, ASSETS_DIR, TEMPLATE_DIR, DB_PASSWORD, DB_USERNAME, PLATFORMS_ROOT_PATH, APACHE_VHOSTS_DIR, logger
 from htmlify.tasks.base import BaseTask
 from htmlify.tasks.crawl import CrawlSiteTask
 from htmlify.tasks.page import PageTask
@@ -90,10 +90,18 @@ class SiteTask(BaseTask):
     def setup(self):
 
         # Copy accross additional assets
+        self.copy_across_assets()
+
+        # Symlink drupal directory (files etc.,)
+        self.symlink_drupal_dir()
+
+        self.setup_vhost()
+    
+    def symlink_drupal_dir(self):
+
         sites_dir = Path(self.output().path)
-
-        dest_assets_dir = sites_dir / 'assets'
-
+        # Scratchped with have file url as /sites/domain/... so we symlink
+        # to the appropriate 
         symlink_path = (sites_dir / 'sites')
         symlink_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -104,22 +112,32 @@ class SiteTask(BaseTask):
                 relative_path = self.platform_path.relative_to(get_first_directory(self.platform_path))
                 platform_path = PLATFORMS_ROOT_PATH / relative_path
             else:
-                platform_path = self.platform_path         
-            
-            symlink_path.symlink_to(platform_path / 'sites')
+                platform_path = self.platform_path 
+
+            # print(symlink_path)
+            platform_sites_path = platform_path / 'sites'
+
+            if not platform_sites_path.exists():
+                raise FileNotFoundError(f'platform path {platform_sites_path} does not exist. This should be the path to where the drupal source files are mounted. ')
+
+            symlink_path.symlink_to(platform_sites_path)        
+
+    def copy_across_assets(self):
+        # Copy across assets like style.css
+        sites_dir = Path(self.output().path)
+        dest_assets_dir = sites_dir / 'assets'
 
         if dest_assets_dir.exists():
             shutil.rmtree(dest_assets_dir)
 
-        shutil.copytree(ASSETS_DIR, dest_assets_dir)
+        shutil.copytree(ASSETS_DIR, dest_assets_dir)        
 
-        self.setup_vhost()
 
     def setup_vhost(self):
 
         sites_dir = Path(self.output().path)
 
-        with (ASSETS_DIR / 'vhosts.tpl').open('r') as f:
+        with (TEMPLATE_DIR / 'vhosts.tpl').open('r') as f:
             content = f.read()    
             content = content.replace('{{DOMAIN}}', self.domain)
             content = content.replace('{{DOCUMENT_ROOT}}', str(sites_dir))

@@ -105,6 +105,6 @@ class MigrateTask(BaseTask):
 
 
 if __name__ == "__main__":    
-    # domain = 'acanthaceae.myspecies.info'
+    domain = 'tabanidae.myspecies.info'
 
-    luigi.build([MigrateTask(force=True)], local_scheduler=True, workers=10)    
+    luigi.build([MigrateTask(force=True, domain=domain)], local_scheduler=True, workers=10)    

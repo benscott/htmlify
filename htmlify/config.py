@@ -11,6 +11,8 @@ DATA_DIR = Path(ROOT_DIR / 'data')
 
 ASSETS_DIR = Path(DATA_DIR / 'assets')
 
+TEMPLATE_DIR = Path(DATA_DIR / 'templates')
+
 PROCESSING_DATA_DIR = Path(DATA_DIR / 'processing')
 PROCESSING_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -20,13 +22,12 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 SITES_DIR = Path(os.getenv('SITES_DIR', '/Users/ben/Projects/Scratchpads/Sites'))
 SITES_DIR.mkdir(parents=True, exist_ok=True)
 
-APACHE_VHOSTS_DIR = Path('/etc/apache2/sites-available/')
-
+APACHE_VHOSTS_DIR = Path(os.getenv('APACHE_VHOSTS_DIR', '/Users/ben/Projects/Scratchpads/Sites/vhosts'))
+APACHE_VHOSTS_DIR.mkdir(parents=True, exist_ok=True)
 
 PLATFORMS_ROOT_PATH = os.getenv('PLATFORMS_ROOT_PATH')
 SCHEME = os.getenv('SCHEME', 'https')
 USE_SELENIUM = True
-
 
 DB_USERNAME = os.getenv('DB_USERNAME')
 DB_PASSWORD = os.getenv('DB_PASSWORD')

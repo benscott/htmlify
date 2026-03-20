@@ -11,9 +11,25 @@ cli = typer.Typer()
 count = 0
 
 @cli.command("migrate")
-def migrate(limit: Optional[int] = None, offset: Optional[int] = None):
+def migrate(
+    limit: Optional[int] = None, 
+    offset: Optional[int] = None, 
+    domain: Optional[str] = typer.Option(
+        None,
+        "--domain",
+        "-d",
+        help="Run migration for a specific domain only",
+        ),
+    ):
 
-    if limit:
+    task_params = {
+        'force': True
+    }
+
+    if domain: 
+        task_params['domain'] = domain
+        typer.secho(f"Migrating domain {domain}", fg=typer.colors.YELLOW) 
+    elif limit:
         if offset:
             typer.secho(f"Migrating: {limit} sites, skipping first {offset}", fg=typer.colors.YELLOW) 
         else:
@@ -40,14 +56,13 @@ def migrate(limit: Optional[int] = None, offset: Optional[int] = None):
 
     @SiteTask.event_handler(luigi.Event.BROKEN_TASK)
     def on_broken_task(task):  
-        _failed_site
+        _failed_site(task)
 
     @SiteTask.event_handler(luigi.Event.FAILURE)
     def on_failure(task):  
-        _failed_site        
-  
+        _failed_site(task)     
 
-    task = MigrateTask(force=True, limit=limit, offset=offset) if limit else MigrateTask(force=True)
+    task = MigrateTask(**task_params)
     luigi.build([task], local_scheduler=True, workers=10) 
 
 
