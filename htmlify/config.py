@@ -26,6 +26,9 @@ APACHE_VHOSTS_DIR = Path(os.getenv('APACHE_VHOSTS_DIR', '/etc/apache2/sites-avai
 APACHE_VHOSTS_DIR.mkdir(parents=True, exist_ok=True)
 
 PLATFORMS_ROOT_PATH = os.getenv('PLATFORMS_ROOT_PATH')
+
+MAX_PAGE_THRESHOLD = os.getenv('MAX_PAGE_THRESHOLD', 10000)
+
 SCHEME = os.getenv('SCHEME', 'https')
 USE_SELENIUM = True
 

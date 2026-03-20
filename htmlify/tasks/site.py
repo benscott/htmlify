@@ -32,7 +32,7 @@ import requests_cache
 import mysql.connector
 
 
-from htmlify.config import CRAWL_SITES, SITES_DIR, ASSETS_DIR, TEMPLATE_DIR, DB_PASSWORD, DB_USERNAME, PLATFORMS_ROOT_PATH, APACHE_VHOSTS_DIR, logger
+from htmlify.config import CRAWL_SITES, SITES_DIR, ASSETS_DIR, TEMPLATE_DIR, DB_PASSWORD, DB_USERNAME, PLATFORMS_ROOT_PATH, APACHE_VHOSTS_DIR, logger, MAX_PAGE_THRESHOLD
 from htmlify.tasks.base import BaseTask
 from htmlify.tasks.crawl import CrawlSiteTask
 from htmlify.tasks.page import PageTask
@@ -42,8 +42,6 @@ from htmlify.tasks.sitemap import SiteMapTask
 from htmlify.url import URL
 from htmlify.db import db_manager
 
-
-MAX_PAGE_THRESHOLD = 10000
 
 class SiteTask(BaseTask):
 
