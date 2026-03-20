@@ -22,7 +22,7 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 SITES_DIR = Path(os.getenv('SITES_DIR', '/Users/ben/Projects/Scratchpads/Sites'))
 SITES_DIR.mkdir(parents=True, exist_ok=True)
 
-APACHE_VHOSTS_DIR = Path(os.getenv('APACHE_VHOSTS_DIR', '/Users/ben/Projects/Scratchpads/Sites/vhosts'))
+APACHE_VHOSTS_DIR = Path(os.getenv('APACHE_VHOSTS_DIR', '/etc/apache2/sites-available/'))
 APACHE_VHOSTS_DIR.mkdir(parents=True, exist_ok=True)
 
 PLATFORMS_ROOT_PATH = os.getenv('PLATFORMS_ROOT_PATH')
