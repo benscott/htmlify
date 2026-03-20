@@ -4,12 +4,14 @@ import requests_cache
 import re
 from pathlib import Path
 import urllib
+import urllib3
 # from urllib import parse_qsl,urlencode
 from operator import itemgetter
 
 from htmlify.config import DATA_DIR
 from htmlify.db import db_manager
 
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 session = requests_cache.CachedSession(DATA_DIR / '.cache')
 
 links = [
