@@ -165,7 +165,7 @@ class SiteMapTask(BaseTask):
         return urls    
 
 if __name__ == "__main__":    
-    domain = 'abrusinthailand.myspecies.info'
+    domain = 'macrostomorpha.info'
 
     # db_conn = mysql.connector.connect(
     #         host='157.140.2.164',
