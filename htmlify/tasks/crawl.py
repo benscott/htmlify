@@ -70,7 +70,7 @@ class CrawlSiteTask(BaseTask):
             else:
 
                 if soup.find('h1', string="Technical difficulties"):
-                    logger.errot(f'Technical difficulties {url}') 
+                    logger.error(f'Technical difficulties {url}') 
                     continue
                             
                 hrefs = self._page_get_hrefs(soup)
@@ -166,6 +166,6 @@ class CrawlSiteTask(BaseTask):
                 yield url.get_normalised()
     
 if __name__ == "__main__":    
-    domain = 'aframomum.myspecies.info'
+    domain = 'macrostomorpha.myspecies.info'
     
     luigi.build([CrawlSiteTask(domain=domain, force=True)], local_scheduler=True)   
