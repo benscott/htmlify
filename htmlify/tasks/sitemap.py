@@ -1,6 +1,5 @@
 import luigi
 import mysql.connector
-import phpserialize
 import itertools
 import yaml
 import pandas as pd
@@ -10,12 +9,48 @@ from htmlify.config import PROCESSING_DATA_DIR, DB_USERNAME, DB_PASSWORD, logger
 from htmlify.tasks.base import BaseExternalTask, BaseTask
 from htmlify.tasks.sites_list import SitesListTask
 from htmlify.db import db_manager
+from htmlify.taxonomy import get_biological_vids
+
+
+SITEMAP_VERSION = '2'
 
 class SiteMapTask(BaseTask):
     
     domain = luigi.Parameter()
     # db_conn = luigi.Parameter()
     output_dir = PROCESSING_DATA_DIR / 'sitemaps'
+
+    excluded_menu_names = {
+        'devel',
+        'management',
+        'navigation',
+        'user-menu',
+    }
+
+    excluded_path_prefixes = (
+        'admin',
+        'batch',
+        'devel',
+        'dwca-export',
+        'dwca_export',
+    )
+
+    excluded_path_parts = {
+        'ajax',
+        'autocomplete',
+        'nojs',
+        'preview',
+    }
+
+    excluded_path_suffixes = (
+        '.bib',
+        '.csv',
+        '.json',
+        '.xml',
+        '/csv',
+        '/feed',
+        '/xml',
+    )
 
     def run(self):
 
@@ -44,27 +79,33 @@ class SiteMapTask(BaseTask):
             self.get_user_urls(),
             self.get_comment_urls(),
             self.get_blog_urls(),
+            self.get_menu_urls(),
+            self.get_view_urls(),
             # BUGFIX: Moved to crating symlinks
             # self.get_public_aliases_urls(),
             self.get_term_urls()
         ]
         
-        urls = list(itertools.chain.from_iterable((urls)))
+        urls = list(dict.fromkeys(itertools.chain.from_iterable(urls)))
 
         logger.debug(f'{len(urls)} found in sitemap')
 
-        with self.output().open('w') as f: 
+        with self.output().open('w') as f:
+            f.write(f'# htmlify-sitemap-version: {SITEMAP_VERSION}\n')
             yaml.dump(urls, f)
 
     def output(self):
         return luigi.LocalTarget(self.output_dir / f'{self.domain}.yaml')   
 
+    def complete(self):
+        if self.force or not self.output().exists():
+            return False
+        with self.output().open() as sitemap:
+            first_line = sitemap.readline().strip()
+        return first_line == f'# htmlify-sitemap-version: {SITEMAP_VERSION}'
+
     def _get_biological_vids(self):
-        value =self._query_one(f'SELECT value FROM variable where name="biological_vids"')        
-        if not value: return []
-        unserialized_data = phpserialize.loads(value[0])
-        vids = [vid for vid, is_class in unserialized_data.items() if is_class]
-        return vids   
+        return get_biological_vids(self.domain)
 
     def _query(self, sql): 
         return db_manager.fetch(self.domain, sql)
@@ -133,6 +174,69 @@ class SiteMapTask(BaseTask):
             urls.append(f'user/{uid}')
 
         return urls    
+
+    @classmethod
+    def is_archivable_path(cls, path):
+        """Return whether a database route is a useful public HTML page."""
+        if not path:
+            return False
+
+        path = path.strip().strip('/')
+        if not path or path in {'<front>', '<nolink>'}:
+            return False
+
+        lower_path = path.lower()
+        if '%' in path or '://' in path:
+            return False
+        if lower_path == 'biblio/import':
+            return False
+        if any(
+            lower_path == prefix or lower_path.startswith(f'{prefix}/')
+            for prefix in cls.excluded_path_prefixes
+        ):
+            return False
+        if any(
+            part in cls.excluded_path_parts
+            for part in lower_path.split('/')
+        ):
+            return False
+        if lower_path.endswith(cls.excluded_path_suffixes):
+            return False
+
+        return True
+
+    def get_menu_urls(self):
+        """Return visible internal links from non-administrative menus."""
+        excluded_names = ', '.join(
+            f"'{name}'" for name in sorted(self.excluded_menu_names)
+        )
+        result = self._query(f"""
+            SELECT DISTINCT link_path
+            FROM menu_links
+            WHERE hidden = 0
+              AND external = 0
+              AND menu_name NOT IN ({excluded_names})
+            ORDER BY link_path
+        """)
+        return [
+            path
+            for path, in result
+            if self.is_archivable_path(path)
+        ]
+
+    def get_view_urls(self):
+        """Return compiled page-display routes, including code-exported Views."""
+        result = self._query("""
+            SELECT DISTINCT path
+            FROM menu_router
+            WHERE page_callback = 'views_page'
+            ORDER BY path
+        """)
+        return [
+            path
+            for path, in result
+            if self.is_archivable_path(path)
+        ]
     
     def get_public_aliases_urls(self):
         urls = []
@@ -149,16 +253,14 @@ class SiteMapTask(BaseTask):
         # Remove the two inbuilt taxonomies
         result = self._query(f"SELECT td.tid, td.vid FROM taxonomy_term_data td INNER JOIN taxonomy_vocabulary v on v.vid=td.vid where v.name != 'Imaging technique' and v.name != 'Preperation technique'")
 
-        bio_tabs = ['literature', 'maps', 'media', 'specimens']
-
         for tid, vid in result:
 
             urls.append(f'taxonomy/term/{tid}')
 
-            if vid in bio_vids:
-                for tab in bio_tabs:
-                    urls.append(f'taxonomy/term/{tid}/{tab}')
-            else:
+            # Biological terms are archived as one combined page. PageTask
+            # discovers that vocabulary's enabled tabs from Drupal and embeds
+            # their content in the canonical term route.
+            if vid not in bio_vids:
                 urls.append(f'simpletaxonomy/term/{tid}')
                 urls.append(f'nontaxonomy/term/{tid}')
 

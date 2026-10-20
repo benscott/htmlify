@@ -1,15 +1,38 @@
 import mysql.connector
 import atexit
+from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
+import socket
 import typer
 
-from htmlify.config import DATA_DIR, DB_USERNAME, DB_PASSWORD
+from htmlify import config
+
+
+def unreachable_database_hosts(targets, timeout=5):
+    """Return TCP database endpoints that cannot be reached quickly."""
+    targets = sorted({(str(host), int(port)) for host, port in targets})
+
+    def probe(target):
+        host, port = target
+        try:
+            connection = socket.create_connection(target, timeout=timeout)
+            connection.close()
+            return None
+        except OSError as error:
+            return {
+                'host': host,
+                'port': port,
+                'error': str(error),
+            }
+
+    with ThreadPoolExecutor(max_workers=max(1, min(10, len(targets)))) as pool:
+        return [result for result in pool.map(probe, targets) if result]
 
 class DBConnectionManager:
     def __init__(self):
 
         # Load the hosts data
-        df = pd.read_csv(DATA_DIR / 'vhosts.csv', usecols=['domain', 'db_name', 'db_host'])
+        df = pd.read_csv(config.DATA_DIR / 'vhosts.csv', usecols=['domain', 'db_name', 'db_host'])
         self._sites = df.set_index('domain')[['db_name','db_host']]
         self._connections = {}  # Dictionary to hold multiple connections
 
@@ -24,18 +47,33 @@ class DBConnectionManager:
 
     def open_connection(self, domain):
         if domain not in self._connections:
+            use_overrides = not config.SOURCE_DOMAIN or domain == config.SOURCE_DOMAIN
 
-            db_name, db_host = self. _get_site(domain)
+            # A canonical domain can differ from the hostname stored in the
+            # production registry (for example weevil.myspecies.info is
+            # registered as weevil.info). A fully configured local source does
+            # not need that production lookup at all.
+            if (
+                use_overrides
+                and config.DB_NAME_OVERRIDE
+                and config.DB_HOST_OVERRIDE
+            ):
+                db_name = config.DB_NAME_OVERRIDE
+                db_host = config.DB_HOST_OVERRIDE
+            else:
+                db_name, db_host = self._get_site(domain)
 
-            # DB_USERNAME = 'root'
-            # db_host = '127.0.0.1'            
+            if use_overrides:
+                db_name = config.DB_NAME_OVERRIDE or db_name
+                db_host = config.DB_HOST_OVERRIDE or db_host
 
             connection = mysql.connector.connect(
                 host=db_host,
-                port=3306,
-                user=DB_USERNAME,
-                password=DB_PASSWORD,
-                database=db_name
+                port=config.DB_PORT_OVERRIDE if use_overrides else 3306,
+                user=config.DB_USERNAME,
+                password=config.DB_PASSWORD,
+                database=db_name,
+                connection_timeout=config.DB_CONNECT_TIMEOUT,
             )     
 
             cursor = connection.cursor()
@@ -95,4 +133,3 @@ if __name__ == "__main__":
     # x = db_manager.fetch("gadus", f'SELECT value FROM variable where name="biological_vids"')
     # print(x)
     # db_manager.open_connection("example2.db")
-

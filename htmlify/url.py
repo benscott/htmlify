@@ -4,7 +4,9 @@ from pathlib import Path
 import re
 import os
 
+from htmlify import config
 from htmlify.config import logger
+from htmlify.utils import is_internal_url
 
 class URL:
 
@@ -23,7 +25,14 @@ class URL:
         self.domain = domain
         
         self.path = self.parsed_url.path.rstrip('/') if self.parsed_url.path else None        
-        self.scheme = self.parsed_url.scheme if self.parsed_url.scheme else self.default_scheme      
+        self.scheme = self.parsed_url.scheme if self.parsed_url.scheme else self.default_scheme
+        if (
+            config.SOURCE_BASE_URL
+            and domain == config.SOURCE_DOMAIN
+            and self.parsed_url.hostname
+            and self.parsed_url.hostname == urllib.parse.urlparse(config.SOURCE_BASE_URL).hostname
+        ):
+            self.scheme = config.SCHEME
         
         self.parsed_query = self._parse_query(self.parsed_url)
         self.facets = [(k, v) for k,v in self.parsed_query if self._query_param_is_facet(k)]  
@@ -35,7 +44,7 @@ class URL:
         return bool(self.facets)     
 
     def is_site_internal_link(self):
-        return not self.parsed_url.netloc or self.domain in self.parsed_url.netloc
+        return is_internal_url(self._url, self.domain)
         
     def get_single_facet_urls(self):
         non_facets = [(k, v) for k,v in self.parsed_query if not self._query_param_is_facet(k)] 
@@ -69,7 +78,10 @@ class URL:
         if query:
             query = urllib.parse.urlencode(query, quote_via=urllib.parse.quote)
 
-        domain = self.parsed_url.netloc if self.parsed_url.netloc else self.domain
+        if self.parsed_url.netloc and not self.is_site_internal_link():
+            domain = self.parsed_url.netloc
+        else:
+            domain = self.domain
             
         return urllib.parse.urlunparse((
             self.scheme, 

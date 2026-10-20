@@ -3,3 +3,208 @@
 .tinytax img{
     cursor: default!important;
 }
+
+.htmlify-facet-controls {
+    background: #f4f4f4;
+    border: 1px solid #d6d6d6;
+    margin: 0 0 1.5em;
+    padding: 1em;
+}
+
+.htmlify-facet-controls h2 {
+    margin-top: 0;
+}
+
+.htmlify-facet-search > label {
+    display: block;
+    font-weight: bold;
+    margin-bottom: 0.35em;
+}
+
+.htmlify-facet-search-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5em;
+}
+
+.htmlify-facet-search input[type="search"] {
+    box-sizing: border-box;
+    min-width: 0;
+    width: 100%;
+}
+
+.htmlify-facet-selected {
+    margin: 0.75em 0;
+}
+
+.htmlify-facet-selected button {
+    margin: 0.2em;
+}
+
+.htmlify-facet-groups {
+    margin: 1em 0;
+}
+
+.htmlify-facet-group {
+    background: #fff;
+    border: 1px solid #d6d6d6;
+    margin-bottom: 0.65em;
+    padding: 0.65em;
+}
+
+.htmlify-facet-group summary {
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.htmlify-facet-value-search {
+    box-sizing: border-box;
+    margin: 0.75em 0 0.4em;
+    width: 100%;
+}
+
+.htmlify-facet-controls button.is-active {
+    font-weight: bold;
+    outline: 2px solid currentColor;
+}
+
+.htmlify-facet-letters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25em;
+    margin: 0.75em 0;
+}
+
+.htmlify-facet-letters button {
+    min-width: 2em;
+}
+
+.htmlify-facet-values {
+    list-style: none;
+    margin: 0;
+    max-height: 20em;
+    overflow-y: auto;
+    padding: 0;
+}
+
+.htmlify-facet-values li {
+    margin-bottom: 0.25em;
+}
+
+.htmlify-facet-more,
+.htmlify-facet-status {
+    color: #555;
+    margin: 1em 0;
+}
+
+.htmlify-facet-results li {
+    margin-bottom: 1em;
+}
+
+.htmlify-facet-results.is-thumbnails {
+    display: grid;
+    gap: 1.25em;
+    grid-template-columns: repeat(auto-fill, minmax(10em, 1fr));
+    list-style: none;
+    padding-left: 0;
+}
+
+.htmlify-facet-results.is-thumbnails li {
+    border: 1px solid #d6d6d6;
+    margin: 0;
+    padding: 0.65em;
+}
+
+.htmlify-facet-result-image {
+    background: #eee;
+    display: block;
+    margin: -0.65em -0.65em 0.65em;
+}
+
+.htmlify-facet-result-image img {
+    aspect-ratio: 1 / 1;
+    display: block;
+    object-fit: cover;
+    width: 100%;
+}
+
+.htmlify-facet-result-title {
+    font-weight: bold;
+}
+
+.htmlify-facet-result-meta {
+    color: #555;
+    font-size: 0.92em;
+}
+
+.htmlify-facet-pagination {
+    align-items: center;
+    display: flex;
+    gap: 1em;
+    justify-content: center;
+}
+
+@media (max-width: 600px) {
+    .htmlify-facet-search-controls {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .htmlify-facet-search input[type="search"] {
+        max-width: none;
+        width: 100%;
+    }
+}
+
+.htmlify-species-tabs ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25em;
+    list-style: none;
+    margin: 0 0 1.25em;
+    padding: 0;
+}
+
+.htmlify-species-tabs a {
+    background: #eee;
+    border: 1px solid #ccc;
+    display: block;
+    padding: 0.45em 0.75em;
+    text-decoration: none;
+}
+
+.htmlify-species-tabs a.active {
+    background: #fff;
+    border-bottom-color: #fff;
+    font-weight: bold;
+}
+
+.htmlify-species-panel {
+    margin-bottom: 2em;
+}
+
+.htmlify-species-page--enhanced .htmlify-species-panel[hidden] {
+    display: none;
+}
+
+.htmlify-taxonomy-tree ul {
+    list-style: none;
+    margin: 0;
+    padding-left: 1em;
+}
+
+.htmlify-taxonomy-tree > .htmlify-taxonomy-list > ul {
+    padding-left: 0;
+}
+
+.htmlify-taxonomy-tree li {
+    margin: 0.25em 0;
+}
+
+.htmlify-taxonomy-tree summary {
+    cursor: pointer;
+}
+
+.htmlify-taxonomy-tree a.active {
+    font-weight: bold;
+}

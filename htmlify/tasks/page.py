@@ -14,6 +14,7 @@ import os
 from urllib.parse import parse_qs, unquote
 from collections import OrderedDict
 import json
+import html
 
 # from selenium import webdriver 
 # from selenium.webdriver.chrome.options import Options
@@ -34,15 +35,45 @@ import requests_cache
 import mysql.connector
 
 
+from htmlify import config
 from htmlify.config import logger, SCHEME, USE_SELENIUM, SITES_DIR
 from htmlify.tasks.base import BaseTask
 from htmlify.tasks.crawl import CrawlSiteTask
 from htmlify.stack import UniqueStack
-from htmlify.utils import get_soup, concat_path, is_decommisionned_link, request, request_json
+from htmlify.utils import (
+    get_soup,
+    concat_path,
+    is_decommisionned_link,
+    is_internal_url,
+    canonicalize_source_references,
+    request,
+    request_json,
+)
 from htmlify.url import URL
 from htmlify.db import db_manager
+from htmlify.facets import (
+    configured_facet_definitions,
+    extract_facet_definitions,
+    extract_result_hints,
+    facet_asset_name,
+    facet_asset_url,
+    facet_configuration_fingerprint,
+    is_configured_facet_page,
+    merge_facet_definitions,
+    write_facet_index,
+)
+from htmlify.taxonomy import (
+    biological_vid_for_term,
+    taxonomy_asset_url,
+    write_taxonomy_index,
+)
 
 
+SPECIES_PAGE_VERSION = '1'
+SKIPPED_PAGE_VERSION = '3'
+FACET_PAGE_VERSION = '9'
+STATIC_ASSET_VERSION = '5'
+PAGE_ARCHIVE_VERSION = '1'
 
 class PageTask(BaseTask):
 
@@ -67,24 +98,84 @@ class PageTask(BaseTask):
         self.domain = self._url.domain               
 
     def run(self):
-
-        
-
         # # self.subdomain = parsed_url.netloc.replace('myspecies.info', '')
 
-        soup = get_soup(self.url)
+        try:
+            if self._classification_vid():
+                response = request(self.url)
+                source_path = urlparse(response.url).path.rstrip('/') or '/'
+                requested_path = self._url.path or '/'
+                if source_path != requested_path:
+                    self._write_redirect_page(source_path)
+                    return
+                soup = BeautifulSoup(response.text, features='html.parser')
+            else:
+                soup = get_soup(self.url)
+        except requests.HTTPError as error:
+            status_code = getattr(error.response, 'status_code', None)
+            if status_code in {401, 403, 404, 410}:
+                self._mark_skipped(f'HTTP {status_code}')
+                return
+            raise
 
         if soup.find('h1', string="Technical difficulties"):
             raise Exception("Technical difficulties")
 
-        if self._is_unavailable_search_page(soup):
+        drupal_facet_definitions = (
+            configured_facet_definitions(self._url.path)
+            if not self._is_search_page() else []
+        )
+        configured_facet_page = (
+            not self._is_search_page()
+            and (
+                bool(drupal_facet_definitions)
+                or is_configured_facet_page(self.domain, self._url.path)
+            )
+        )
+        if (
+            self._is_unavailable_search_page(soup)
+            and not configured_facet_page
+        ):
             raise Exception('Empty search page - Search is temporarily unavailable')
+
+        species_tid = self._species_term_id()
+        species_vid = (
+            biological_vid_for_term(self.domain, species_tid)
+            if species_tid else None
+        )
+        if species_vid:
+            self.species_page(soup, species_tid, species_vid)
+
+        facet_definitions = []
+        result_hints = []
+        if not species_vid and not self._is_search_page():
+            rendered_facet_definitions = extract_facet_definitions(
+                soup,
+                domain=self.domain,
+            )
+            facet_definitions = merge_facet_definitions(
+                drupal_facet_definitions,
+                rendered_facet_definitions,
+            )
+            if facet_definitions or configured_facet_page:
+                result_hints = extract_result_hints(soup)
+
+        is_facet_page = bool(facet_definitions) or configured_facet_page
+
+        # Do this before expanding widgets or downloading assets. Template-only
+        # taxonomy tabs are common and should not cost a full page conversion.
+        if not is_facet_page and not self._page_has_content(soup):
+            self._mark_skipped('main content region is empty')
+            return
 
         if self._is_tinytax(soup):
             self.process_tinytax(soup)
 
         if self._is_slickgrid(soup):
             soup = self._load_slickgrid(soup)
+
+        if is_facet_page:
+            self.facet_page(soup, facet_definitions, result_hints)
 
         self.process_css_style_urls(soup)
         self.process_css(soup)
@@ -101,7 +192,6 @@ class PageTask(BaseTask):
 
         self.contact_page_message(soup)
         self.search_page(soup)
-        self.biblio_page(soup)
         self.login_page(soup)
         self.node_page(soup)
 
@@ -110,19 +200,29 @@ class PageTask(BaseTask):
 
         self.remove_feeds(soup)
 
-        if not self._page_has_content(soup):
-            raise Exception(f'HTML file has no content: {self.url}')    
-
         # Create a new link tag for the stylesheet
         if soup.head:
-            new_stylesheet = soup.new_tag('link', rel='stylesheet', href='/assets/style.css')                
+            new_stylesheet = soup.new_tag(
+                'link',
+                rel='stylesheet',
+                href=f'/assets/style.css?v={STATIC_ASSET_VERSION}',
+            )
             soup.head.append(new_stylesheet)
+
+        if soup.html:
+            soup.html['data-htmlify-page-version'] = PAGE_ARCHIVE_VERSION
+            soup.html['data-htmlify-domain'] = self.domain
 
         self.parsed_path.mkdir(parents=True, exist_ok=True)
 
         logger.debug(f"Saving page to {self.output().path}")
+        self.skipped_path.unlink(missing_ok=True)
         with self.output().open('wb') as f: 
-            f.write(soup.encode('utf-8'))    
+            html = canonicalize_source_references(str(soup), self.domain)
+            f.write(html.encode('utf-8'))
+
+        if species_vid:
+            self._write_species_tab_redirects(soup, species_tid)
 
     def disable_autocomplete(self, soup):            
         autocomplete_els = soup.find_all(class_='autocomplete')
@@ -186,6 +286,336 @@ class PageTask(BaseTask):
 
     def output(self):
         return luigi.LocalTarget(self.parsed_path / 'index.html', format=luigi.format.Nop)
+
+    @property
+    def skipped_path(self):
+        relative_path = self.parsed_path.relative_to(Path(self.output_dir))
+        return (
+            config.PROCESSING_DATA_DIR
+            / 'skipped'
+            / self.domain
+            / relative_path
+            / '.htmlify-skipped'
+        )
+
+    def _mark_skipped(self, reason):
+        Path(self.output().path).unlink(missing_ok=True)
+        try:
+            self.parsed_path.rmdir()
+        except (FileNotFoundError, OSError):
+            pass
+        self.skipped_path.parent.mkdir(parents=True, exist_ok=True)
+        self.skipped_path.write_text(
+            f'htmlify-skip-version: {SKIPPED_PAGE_VERSION}\n'
+            f'{self.url}\n{reason}\n',
+            encoding='utf-8',
+        )
+        logger.info(f'Skipping empty page {self.url}: {reason}')
+
+    def complete(self):
+        if self.force:
+            return False
+        output_path = Path(self.output().path)
+        if not output_path.exists():
+            if not self.skipped_path.exists():
+                return False
+            first_line = self.skipped_path.read_text(
+                encoding='utf-8',
+                errors='ignore',
+            ).splitlines()[0]
+            if first_line == f'htmlify-skip-version: {SKIPPED_PAGE_VERSION}':
+                return True
+
+            if self._classification_vid():
+                return False
+
+            # Legacy biological term pages were commonly marked empty because
+            # their useful content lived on child tabs. Revisit only those old
+            # taxonomy markers during this upgrade.
+            species_tid = self._species_term_id()
+            return not (
+                species_tid
+                and biological_vid_for_term(self.domain, species_tid)
+            )
+
+        species_tid = self._species_term_id()
+        species_vid = (
+            biological_vid_for_term(self.domain, species_tid)
+            if species_tid else None
+        )
+
+        # A faceted page must run again when its page-specific JSON index is
+        # missing. This also upgrades archives made by the older
+        # bibliography-only implementation.
+        html = output_path.read_text(encoding='utf-8', errors='ignore')
+        if (
+            f'data-htmlify-page-version="{PAGE_ARCHIVE_VERSION}"' not in html
+            or f'data-htmlify-domain="{self.domain}"' not in html
+        ):
+            return False
+        if species_vid:
+            version = (
+                f'data-htmlify-species-version="{SPECIES_PAGE_VERSION}"'
+            )
+            if version not in html:
+                return False
+            taxonomy_index = (
+                Path(self.output_dir)
+                / taxonomy_asset_url(species_vid).lstrip('/')
+            )
+            if not taxonomy_index.exists():
+                return False
+        else:
+            configured_facets = configured_facet_definitions(self._url.path)
+        if not species_vid and (
+            configured_facets
+            or is_configured_facet_page(self.domain, self._url.path)
+        ):
+            version = f'data-htmlify-facet-version="{FACET_PAGE_VERSION}"'
+            if version not in html:
+                return False
+            fingerprint = facet_configuration_fingerprint(self._url.path)
+            if (
+                fingerprint
+                and f'data-htmlify-facet-config="{fingerprint}"' not in html
+            ):
+                return False
+        if 'htmlify-biblio-browser' in html:
+            return False
+        if 'block-facetapi' in html and not self._is_search_page():
+            return False
+        if 'htmlify-facet-browser' in html:
+            match = re.search(r'data-index-url=["\']([^"\']+)["\']', html)
+            if not match:
+                return False
+            index_path = Path(self.output_dir) / match.group(1).lstrip('/')
+            if not index_path.exists():
+                return False
+        return True
+
+    def _species_term_id(self):
+        match = re.fullmatch(r'/taxonomy/term/(\d+)', self._url.path or '')
+        return int(match.group(1)) if match else None
+
+    def _classification_vid(self):
+        match = re.fullmatch(r'/classification/(\d+)', self._url.path or '')
+        return int(match.group(1)) if match else None
+
+    def _write_redirect_page(self, destination):
+        destination = '/' + destination.lstrip('/')
+        escaped_destination = html.escape(destination, quote=True)
+        redirect = (
+            '<!doctype html><html '
+            f'data-htmlify-page-version="{PAGE_ARCHIVE_VERSION}" '
+            f'data-htmlify-domain="{self.domain}">'
+            '<head><meta charset="utf-8">'
+            f'<meta http-equiv="refresh" content="0; url={escaped_destination}">'
+            f'<link rel="canonical" href="{escaped_destination}">'
+            '</head><body><p>'
+            f'<a href="{escaped_destination}">Continue to the classification</a>'
+            '</p></body></html>'
+        )
+        self.parsed_path.mkdir(parents=True, exist_ok=True)
+        self.skipped_path.unlink(missing_ok=True)
+        Path(self.output().path).write_text(redirect, encoding='utf-8')
+
+    @staticmethod
+    def _species_tab_slug(path, base_path, label):
+        suffix = path[len(base_path):].strip('/')
+        if suffix:
+            return suffix
+        slug = re.sub(r'[^a-z0-9]+', '-', label.lower()).strip('-')
+        return slug or 'overview'
+
+    @staticmethod
+    def _species_tab_label(link):
+        link = copy.deepcopy(link)
+        for hidden in link.select('.element-invisible'):
+            hidden.decompose()
+        return link.get_text(' ', strip=True)
+
+    @staticmethod
+    def _species_tab_content(tab_soup):
+        root = (
+            tab_soup.select_one('#region-content .region-content-inner')
+            or tab_soup.select_one('#region-content')
+        )
+        if not root:
+            return []
+        tabs = root.select_one('div.tabs')
+        if not tabs:
+            main = root.select_one('#block-system-main')
+            return [copy.deepcopy(main)] if main else []
+
+        content = []
+        found_tabs = False
+        for child in root.contents:
+            if child is tabs:
+                found_tabs = True
+                continue
+            if found_tabs and (not isinstance(child, str) or child.strip()):
+                content.append(copy.deepcopy(child))
+        return content
+
+    def species_page(self, soup, tid, vid):
+        """Combine the enabled Drupal species tabs into one static page."""
+        base_path = f'/taxonomy/term/{tid}'
+        tabs_container = soup.select_one('#region-content div.tabs')
+        tabs_list = tabs_container.select_one('ul.tabs') if tabs_container else None
+        if not tabs_container or not tabs_list:
+            return
+
+        tabs = []
+        seen = set()
+        for link in tabs_list.find_all('a', href=True):
+            parsed = urlparse(link['href'])
+            path = parsed.path.rstrip('/') or '/'
+            if path != base_path and not path.startswith(f'{base_path}/'):
+                continue
+            label = self._species_tab_label(link)
+            slug = self._species_tab_slug(path, base_path, label)
+            if slug in seen:
+                continue
+            seen.add(slug)
+            tabs.append({'slug': slug, 'label': label, 'path': path})
+
+        if not tabs:
+            return
+
+        panels = []
+        for tab in tabs:
+            if tab['path'] == base_path:
+                tab_soup = soup
+            else:
+                tab_url = urlunparse((
+                    self._url.scheme,
+                    self._url.domain,
+                    tab['path'],
+                    '',
+                    '',
+                    '',
+                ))
+                try:
+                    tab_soup = get_soup(tab_url)
+                except requests.RequestException as error:
+                    logger.warning(
+                        f'Could not archive species tab {tab_url}: {error}'
+                    )
+                    tab_soup = None
+
+            section = soup.new_tag('section')
+            section['class'] = ['htmlify-species-panel']
+            section['id'] = f"species-tab-{tab['slug']}"
+            section['data-species-tab'] = tab['slug']
+            heading = soup.new_tag('h2')
+            heading.string = tab['label']
+            section.append(heading)
+
+            tab_content = (
+                self._species_tab_content(tab_soup) if tab_soup else []
+            )
+            if tab_content:
+                section.extend(tab_content)
+            else:
+                empty = soup.new_tag('p')
+                empty['class'] = ['htmlify-species-empty']
+                empty.string = 'No archived content is available for this section.'
+                section.append(empty)
+            panels.append(section)
+
+        tabs_container.clear()
+        tabs_container['class'] = ['tabs', 'htmlify-species-tabs']
+        tabs_container['aria-label'] = 'Species page sections'
+        new_list = soup.new_tag('ul')
+        new_list['role'] = 'tablist'
+        for position, tab in enumerate(tabs):
+            item = soup.new_tag('li')
+            link = soup.new_tag(
+                'a',
+                href=f"#species-tab-{tab['slug']}",
+            )
+            link['data-species-tab'] = tab['slug']
+            link['role'] = 'tab'
+            link['aria-controls'] = f"species-tab-{tab['slug']}"
+            link['aria-selected'] = 'true' if position == 0 else 'false'
+            if position == 0:
+                link['class'] = ['active']
+            link.string = tab['label']
+            item.append(link)
+            new_list.append(item)
+        tabs_container.append(new_list)
+
+        insertion_point = tabs_container
+        for panel in panels:
+            insertion_point.insert_after(panel)
+            insertion_point = panel
+
+        content_region = soup.select_one('#region-content')
+        if content_region:
+            classes = list(content_region.get('class', []))
+            if 'htmlify-species-page' not in classes:
+                classes.append('htmlify-species-page')
+            content_region['class'] = classes
+            content_region['data-htmlify-species-version'] = SPECIES_PAGE_VERSION
+
+        self._replace_taxonomy_tree(soup, tid, vid)
+        if not soup.find('script', src='/assets/species-page.js'):
+            script = soup.new_tag(
+                'script',
+                src='/assets/species-page.js',
+                defer=True,
+            )
+            if soup.body:
+                soup.body.append(script)
+
+    def _replace_taxonomy_tree(self, soup, tid, vid):
+        block = soup.select_one('section.block-tinytax')
+        if not block:
+            return
+
+        destination = (
+            Path(self.output_dir)
+            / taxonomy_asset_url(vid).lstrip('/')
+        )
+        if self.force or not destination.exists():
+            write_taxonomy_index(self.domain, vid, destination)
+
+        classes = [
+            name for name in block.get('class', [])
+            if name != 'block-tinytax'
+        ]
+        classes.append('htmlify-taxonomy-tree')
+        block['class'] = classes
+        block['data-index-url'] = taxonomy_asset_url(vid)
+        block['data-current-tid'] = str(tid)
+
+        content = block.find(class_='content')
+        if not content:
+            content = block
+        content.clear()
+        status = soup.new_tag('p')
+        status['class'] = ['htmlify-taxonomy-status']
+        status.string = 'Loading taxonomy…'
+        tree = soup.new_tag('div')
+        tree['class'] = ['htmlify-taxonomy-list']
+        content.extend([status, tree])
+
+    def _write_species_tab_redirects(self, soup, tid):
+        for link in soup.select('.htmlify-species-tabs a[data-species-tab]'):
+            slug = link['data-species-tab']
+            redirect_dir = self.parsed_path / slug
+            redirect_dir.mkdir(parents=True, exist_ok=True)
+            destination = f'/taxonomy/term/{tid}#species-tab-{slug}'
+            escaped_destination = html.escape(destination, quote=True)
+            label = html.escape(link.get_text(' ', strip=True))
+            redirect = (
+                '<!doctype html><html><head><meta charset="utf-8">'
+                f'<meta http-equiv="refresh" content="0; url={escaped_destination}">'
+                f'<link rel="canonical" href="{escaped_destination}"></head><body>'
+                f'<p><a href="{escaped_destination}">View {label}</a></p>'
+                '</body></html>'
+            )
+            (redirect_dir / 'index.html').write_text(redirect, encoding='utf-8')
 
     def _is_tinytax(self, soup):
         return bool(soup.find('section', {"class": "block-tinytax"})) 
@@ -308,6 +738,8 @@ class PageTask(BaseTask):
         # Loop through the links, ensuring they match the new static site structure
         for a in soup.find_all('a', href=True):  
             href = a.get('href')
+            if href.startswith('#'):
+                continue
             if is_decommisionned_link(href):
                 a.decompose()
                 continue
@@ -337,7 +769,17 @@ class PageTask(BaseTask):
             div.decompose()        
 
     def process_css(self, soup): 
-        for link in soup.find_all('link', {"type" : "text/css"}):
+        for link in soup.find_all('link', href=True):
+            rel = set(link.get('rel', []))
+            is_page_asset = (
+                link.get('type') == 'text/css'
+                or bool(rel & {
+                    'stylesheet', 'icon', 'shortcut', 'apple-touch-icon',
+                    'mask-icon',
+                })
+            )
+            if not is_page_asset:
+                continue
             if rel_path := self.process_remote_file(link['href']):
                 link['href'] = rel_path     
 
@@ -374,7 +816,7 @@ class PageTask(BaseTask):
         parsed_url = urlparse(url)
         # If the file has domain that isn't the one we're processing
         # we'll keep the url exactly the same 
-        if parsed_url.netloc and self.domain not in parsed_url.netloc:
+        if not is_internal_url(url, self.domain):
             return False
         
         if parsed_url.netloc.startswith('www'):
@@ -384,7 +826,9 @@ class PageTask(BaseTask):
 
         # If this file is in the sites directory, we should already have it
         if parsed_url.path.startswith('/sites'):
-            if not dest_path.exists():                
+            if config.DRUPAL_FILES_MODE == 'external':
+                return parsed_url.path
+            if not dest_path.exists():
                 logger.error(f'Sites file {dest_path} does not exist')
             else:
                 return parsed_url.path  
@@ -410,13 +854,20 @@ class PageTask(BaseTask):
         # If it doesn;t start with a domain, download it
         parsed_url = urlparse(url)
 
+        # Drupal can emit protocol-relative URLs using DDEV's hostname. Route
+        # every internal asset through the canonical domain first; request()
+        # will then map it back to SOURCE_BASE_URL with the correct scheme.
+        request_domain = parsed_url.netloc or self.domain
+        if is_internal_url(url, self.domain):
+            request_domain = self.domain
+
         # Rebuild the URL substituting missing domain/schemas etc.,
         url = urlunparse((
             parsed_url.scheme or SCHEME, 
-            parsed_url.netloc or self.domain, 
+            request_domain,
             parsed_url.path, 
             '', 
-            '', 
+            '',
             ''
         ))
         r = request(url)
@@ -424,7 +875,41 @@ class PageTask(BaseTask):
         return r.content                
 
     def _page_has_content(self, soup):
-        return bool(soup.find('div'))
+        content = (
+            soup.select_one('#region-content')
+            or soup.select_one('main')
+            or soup.select_one('[role="main"]')
+            or soup.select_one('#content')
+        )
+        if content is None:
+            # Unknown themes should be retained rather than discarded based on
+            # a layout assumption that only applies to Scratchpads.
+            return True
+
+        content = copy.deepcopy(content)
+        chrome_selectors = (
+            '#main-content',
+            '#page-title',
+            '.tabs',
+            '.messages',
+            '.contextual-links-wrapper',
+            '.view-empty',
+            '.views-empty',
+            'script',
+            'style',
+        )
+        for selector in chrome_selectors:
+            for element in content.select(selector):
+                element.decompose()
+
+        text = content.get_text(' ', strip=True).replace('\xa0', '').strip()
+        if text:
+            return True
+
+        return bool(content.find([
+            'article', 'audio', 'canvas', 'embed', 'iframe', 'img', 'object',
+            'table', 'video',
+        ]))
 
     def remove_login_block(self, soup):
         if login_block := soup.find('div', id='block-user-login'):
@@ -443,9 +928,101 @@ class PageTask(BaseTask):
         if search_facets := soup.find('div', class_="apachesolr-browse-blocks"):
             search_facets.decompose()            
 
-    def biblio_page(self, soup):
-        if biblio_links := soup.find('div', class_='biblio-links-info'):
-            biblio_links.decompose()         
+    def facet_page(self, soup, facets, result_hints):
+        """Replace a live Solr/Facet API result page with a static browser."""
+        page_path = self._url.path or '/'
+        title_element = soup.find(id='page-title') or soup.find('h1')
+        page_title = (
+            title_element.get_text(' ', strip=True)
+            if title_element else page_path.strip('/').replace('-', ' ').title()
+        )
+        asset_name = facet_asset_name(page_path)
+        destination = Path(self.output_dir) / 'assets' / 'facets' / asset_name
+        write_facet_index(
+            self.domain,
+            page_path,
+            page_title,
+            facets,
+            result_hints,
+            destination,
+        )
+
+        for selector in (
+            '.block-facetapi',
+            '.block-scratchpads-biblio-search',
+            '.apachesolr-browse-blocks',
+            '.biblio-links-info',
+        ):
+            for block in soup.select(selector):
+                block.decompose()
+
+        if soup.select_one('.htmlify-facet-browser'):
+            return
+
+        controls_html = '''
+            <section class="htmlify-facet-controls">
+              <h2></h2>
+              <form class="htmlify-facet-search" role="search">
+                <label for="htmlify-facet-query">Search these records</label>
+                <div class="htmlify-facet-search-controls">
+                  <input id="htmlify-facet-query" name="q" type="search">
+                  <button type="submit">Search</button>
+                  <button class="htmlify-facet-clear" type="button">Clear</button>
+                </div>
+              </form>
+              <div class="htmlify-facet-selected" aria-live="polite"></div>
+              <div class="htmlify-facet-groups"></div>
+            </section>
+        '''
+        browser_html = '''
+            <section class="htmlify-facet-browser">
+              <p class="htmlify-facet-status" aria-live="polite">
+                Loading the static index…
+              </p>
+              <ol class="htmlify-facet-results"></ol>
+              <nav class="htmlify-facet-pagination" aria-label="Result pages"></nav>
+              <noscript>
+                JavaScript is required to search or browse this static index.
+              </noscript>
+            </section>
+        '''
+        controls = BeautifulSoup(controls_html, 'html.parser').find('section')
+        browser = BeautifulSoup(browser_html, 'html.parser').find('section')
+        browser['data-index-url'] = facet_asset_url(page_path)
+        browser['data-htmlify-facet-version'] = FACET_PAGE_VERSION
+        if fingerprint := facet_configuration_fingerprint(page_path):
+            browser['data-htmlify-facet-config'] = fingerprint
+        controls.find('h2').string = f'Filter {page_title}'
+
+        sidebar = soup.select_one('#region-sidebar .region-inner, #region-sidebar')
+        if sidebar:
+            sidebar.insert(0, controls)
+        else:
+            browser.insert(0, controls)
+
+        main_block = soup.select_one('#block-system-main')
+        main_content = main_block.find(class_='content') if main_block else None
+        if main_content:
+            main_content.clear()
+            main_content.append(browser)
+        elif title_element:
+            title_element.insert_after(browser)
+        else:
+            content = soup.find(id='region-content') or soup.find('main') or soup.body
+            if content:
+                content.insert(0, browser)
+
+        script = soup.new_tag(
+            'script',
+            src=f'/assets/facet-search.js?v={STATIC_ASSET_VERSION}',
+            defer=True,
+        )
+        if soup.body:
+            soup.body.append(script)
+
+    def _is_search_page(self):
+        path = self._url.path or ''
+        return path == '/search' or path.startswith('/search/')
 
     def _is_unavailable_search_page(self, soup):
         if main_content := soup.find('section', id='section-content'):

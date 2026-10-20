@@ -19,6 +19,11 @@ class MigrateTask(BaseTask):
     domain = luigi.Parameter(default=None) 
     limit = luigi.IntParameter(default=None) 
     offset = luigi.IntParameter(default=None) 
+    platform_path = luigi.Parameter(default=None, significant=False)
+    page_path = luigi.OptionalParameter(default=None)
+    page_prefix = luigi.OptionalParameter(default=None)
+    page_limit = luigi.OptionalIntParameter(default=None)
+    page_offset = luigi.IntParameter(default=0)
 
     tranche_1_domains = [
         'alkcarb.myspecies.info',
@@ -79,7 +84,11 @@ class MigrateTask(BaseTask):
 
             yield SiteTask(
                 domain=domain,
-                platform_path=row.platform_path,             
+                platform_path=self.platform_path or row.platform_path,
+                page_path=self.page_path,
+                page_prefix=self.page_prefix,
+                page_limit=self.page_limit,
+                page_offset=self.page_offset,
             )
 
     # def resolve_non_myspecies_domain(self, domain):

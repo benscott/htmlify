@@ -32,6 +32,9 @@ class CrawlSiteTask(BaseTask):
 
     def requires(self):
         # return SiteMapTask(domain=self.domain, db_conn=self.db_conn)
+        # A forced task must not force its dependencies: TaskMixin.complete()
+        # deliberately reports forced tasks as incomplete, which would make
+        # Luigi reject the sitemap again immediately before run().
         return SiteMapTask(domain=self.domain)
     
     def run(self):

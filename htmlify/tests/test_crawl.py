@@ -1,47 +1,42 @@
 import unittest
-import mysql.connector
-from mysql.connector import Error
+from unittest.mock import patch
 
-from htmlify.config import PROCESSING_DATA_DIR, DB_USERNAME, DB_PASSWORD, SCHEME, logger
+from bs4 import BeautifulSoup
+
 from htmlify.tasks.crawl import CrawlSiteTask
-from htmlify.utils import get_soup
+
 
 class TestCrawl(unittest.TestCase):
 
-    def setUp(self):
-        # Set up the database connection
-        self.db_conn = mysql.connector.connect(
-            host='127.0.0.1',
-            port=3306,
-            user=DB_USERNAME,
-            password=DB_PASSWORD,
-            database='drupal'
+    def test_force_is_not_propagated_to_sitemap_dependency(self):
+        task = CrawlSiteTask(domain='gadus.myspecies.info', force=True)
+
+        self.assertFalse(task.requires().force)
+
+    @patch('htmlify.tasks.crawl.get_site_aliases', return_value=[])
+    def test_page_get_hrefs_keeps_query_parameters(self, _aliases):
+        soup = BeautifulSoup(
+            '<a href="/gallery?page=1">Next</a>',
+            'html.parser',
         )
-        self.cursor = self.db_conn.cursor()
-        domain = 'gadus.myspecies.info'
-        self.crawl_task = CrawlSiteTask(domain=domain, db_conn=self.db_conn)
+        task = CrawlSiteTask(domain='gadus.myspecies.info')
 
-    def tearDown(self):
-        # Close the database connection
-        if self.db_conn.is_connected():
-            self.cursor.close()
-            self.db_conn.close()
+        hrefs = list(task._page_get_hrefs(soup))
 
-    def test_connection(self):
-        # Test if the connection is established
-        self.assertTrue(self.db_conn.is_connected(), "Database connection should be established.")
+        self.assertEqual(
+            hrefs,
+            ['https://gadus.myspecies.info/gallery?page=1'],
+        )
 
-    def test_page_get_hrefs(self):
-        url = 'https://gadus.myspecies.info/gallery'
-        soup = get_soup(url)
+    @patch('htmlify.tasks.crawl.get_site_aliases', return_value=[])
+    def test_page_get_hrefs_ignores_external_links(self, _aliases):
+        soup = BeautifulSoup(
+            '<a href="https://example.org/page">External</a>',
+            'html.parser',
+        )
+        task = CrawlSiteTask(domain='gadus.myspecies.info')
 
-        hrefs = list(self.crawl_task._page_get_hrefs(soup))
-        self.assertTrue('http://gadus.myspecies.info/gallery?page=1' in hrefs, "Query params included")
-
-
-if __name__ == '__main__':
-    unittest.main()
-
+        self.assertEqual(list(task._page_get_hrefs(soup)), [])
 
 
 if __name__ == '__main__':
