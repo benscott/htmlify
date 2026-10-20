@@ -9,6 +9,7 @@ from htmlify.progress import (
     clear_progress,
     configure_progress,
     format_duration,
+    get_batch_failures,
     initialise_batch_progress,
     initialise_site_progress,
     record_batch_completion,
@@ -83,7 +84,12 @@ class TestProgress(unittest.TestCase):
                     'Sitemaps', processed=True, failed=False, now=110,
                 )
                 record_batch_completion(
-                    'Sitemaps', processed=True, failed=True, now=110,
+                    'Sitemaps',
+                    processed=True,
+                    failed=True,
+                    item='broken.example.org',
+                    error='database missing',
+                    now=110,
                 )
 
             final_line = output.getvalue().splitlines()[-1]
@@ -92,6 +98,10 @@ class TestProgress(unittest.TestCase):
             self.assertIn('1 failed', final_line)
             self.assertIn('elapsed 10s', final_line)
             self.assertIn('ETA 35s', final_line)
+            self.assertEqual(get_batch_failures('Sitemaps'), [{
+                'item': 'broken.example.org',
+                'error': 'database missing',
+            }])
 
 
 if __name__ == '__main__':

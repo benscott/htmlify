@@ -28,6 +28,7 @@ from htmlify.progress import (
     clear_progress,
     configure_progress,
     format_duration,
+    get_batch_failures,
     initialise_batch_progress,
     record_batch_completion,
     record_page_completion,
@@ -36,6 +37,51 @@ from htmlify.validation import validate_copy, validate_site
 
 cli = typer.Typer()
 count = 0
+
+
+def _concise_exception(error):
+    outer_message = ' '.join(str(error).split()) or 'Unknown error'
+    summary = f'{type(error).__name__}: {outer_message}'
+    current = error
+    seen = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        next_error = current.__cause__ or current.__context__
+        if next_error is None:
+            break
+        current = next_error
+    if current is not error:
+        cause_message = ' '.join(str(current).split()) or 'Unknown error'
+        summary += f' (caused by {type(current).__name__}: {cause_message})'
+    return summary
+
+
+def _print_sitemap_failures(failures):
+    if not failures:
+        return
+    typer.secho(
+        f'\nSITEMAP FAILURES: {len(failures):,}',
+        fg=typer.colors.RED,
+        bold=True,
+        err=True,
+    )
+    for failure in failures[:20]:
+        typer.secho(
+            f"  {failure['item']} — {failure['error']}",
+            fg=typer.colors.RED,
+            err=True,
+        )
+    if len(failures) > 20:
+        typer.secho(
+            f'  …and {len(failures) - 20:,} more failures',
+            fg=typer.colors.RED,
+            err=True,
+        )
+    typer.secho(
+        f'Full tracebacks: {config.LOG_DIR / "error.log"}',
+        fg=typer.colors.YELLOW,
+        err=True,
+    )
 
 
 def _print_sitemap_inventory(inventory):
@@ -156,6 +202,7 @@ def sitemaps(
         domains = [domain]
 
     result = None
+    sitemap_failures = []
     started = time.monotonic()
     if build:
         tasks = [SiteMapTask(domain=value, force=force) for value in domains]
@@ -217,15 +264,37 @@ def sitemaps(
             )
 
         @SiteMapTask.event_handler(luigi.Event.FAILURE)
-        def on_sitemap_failure(_task, _exception):
+        def on_sitemap_failure(task, exception):
+            error = _concise_exception(exception)
+            typer.secho(
+                f'SITEMAP FAILED: {task.domain} — {error}',
+                fg=typer.colors.RED,
+                bold=True,
+                err=True,
+            )
             record_batch_completion(
-                'Sitemaps', processed=True, failed=True,
+                'Sitemaps',
+                processed=True,
+                failed=True,
+                item=task.domain,
+                error=error,
             )
 
         @SiteMapTask.event_handler(luigi.Event.BROKEN_TASK)
-        def on_broken_sitemap(_task, _exception):
+        def on_broken_sitemap(task, exception):
+            error = _concise_exception(exception)
+            typer.secho(
+                f'SITEMAP BROKEN: {task.domain} — {error}',
+                fg=typer.colors.RED,
+                bold=True,
+                err=True,
+            )
             record_batch_completion(
-                'Sitemaps', processed=True, failed=True,
+                'Sitemaps',
+                processed=True,
+                failed=True,
+                item=task.domain,
+                error=error,
             )
 
         try:
@@ -234,13 +303,17 @@ def sitemaps(
                 local_scheduler=True,
                 workers=workers,
                 detailed_summary=True,
+                log_level='INFO',
             )
         finally:
+            sitemap_failures = get_batch_failures('Sitemaps')
             typer.echo(
                 f'Sitemap task time: '
                 f'{format_duration(time.monotonic() - started)}'
             )
             clear_progress()
+
+    _print_sitemap_failures(sitemap_failures)
 
     inventory = build_sitemap_inventory(
         domains,
@@ -249,6 +322,7 @@ def sitemaps(
         config.PROCESSING_DATA_DIR,
         STATIC_ARCHIVE_VERSION,
     )
+    inventory.failures = sitemap_failures
     _print_sitemap_inventory(inventory)
     if report:
         inventory.write_json(report)

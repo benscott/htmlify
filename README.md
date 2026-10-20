@@ -80,7 +80,10 @@ checks that each production MySQL host is reachable and gives a museum-VPN
 message instead of launching hundreds of tasks that will time out. Connection
 attempts default to ten seconds and can be changed with
 `--connection-timeout SECONDS`. Progress output counts successful and failed
-sites and estimates the remaining time.
+sites and estimates the remaining time. Each failure is printed immediately as
+`SITEMAP FAILED: domain — exception`; the end-of-run summary repeats the first
+20 failures and points to `data/.log/error.log` for full tracebacks. JSON
+inventory reports also include the complete concise failure list.
 
 Pages whose Drupal `#region-content` contains only page chrome (for example a
 taxonomy title, tabs, or an empty-view message) are not written. A hidden

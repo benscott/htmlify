@@ -159,6 +159,7 @@ def initialise_batch_progress(name, total, *, now=None):
             'processed': 0,
             'succeeded': 0,
             'failed': 0,
+            'failures': [],
             'started_at': now,
             'last_report_at': now,
         }
@@ -169,7 +170,15 @@ def initialise_batch_progress(name, total, *, now=None):
         print(message, flush=True)
 
 
-def record_batch_completion(name, *, processed, failed=False, now=None):
+def record_batch_completion(
+    name,
+    *,
+    processed,
+    failed=False,
+    item=None,
+    error=None,
+    now=None,
+):
     now = time.monotonic() if now is None else now
     try:
         interval = max(0, float(os.getenv(PROGRESS_INTERVAL_ENV, '5')))
@@ -182,6 +191,13 @@ def record_batch_completion(name, *, processed, failed=False, now=None):
             return None
         batch['completed'] += 1
         batch['failed' if failed else 'succeeded'] += 1
+        if failed and item:
+            failure = {
+                'item': str(item),
+                'error': str(error or 'Unknown error'),
+            }
+            if failure not in batch.setdefault('failures', []):
+                batch['failures'].append(failure)
         if processed:
             batch['processed'] += 1
         should_report = (
@@ -195,3 +211,11 @@ def record_batch_completion(name, *, processed, failed=False, now=None):
 
     if message := _update_state(complete):
         print(message, flush=True)
+
+
+def get_batch_failures(name):
+    def read(state):
+        batch = state.setdefault('batches', {}).get(name, {})
+        return list(batch.get('failures', []))
+
+    return _update_state(read) or []

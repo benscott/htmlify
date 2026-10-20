@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import json
 from pathlib import Path
 
@@ -19,6 +19,7 @@ class SiteInventoryEntry:
 @dataclass
 class SitemapInventory:
     sites: list[SiteInventoryEntry]
+    failures: list[dict] = field(default_factory=list)
 
     @property
     def summary(self):
@@ -36,6 +37,7 @@ class SitemapInventory:
         return {
             'summary': self.summary,
             'sites': [site.as_dict() for site in self.sites],
+            'failures': self.failures,
         }
 
     def write_json(self, path):
@@ -118,4 +120,3 @@ def build_sitemap_inventory(
             has_run=status != 'not run',
         ))
     return SitemapInventory(entries)
-
