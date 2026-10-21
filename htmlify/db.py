@@ -28,6 +28,39 @@ def unreachable_database_hosts(targets, timeout=5):
     with ThreadPoolExecutor(max_workers=max(1, min(10, len(targets)))) as pool:
         return [result for result in pool.map(probe, targets) if result]
 
+
+def database_authentication_errors(
+    targets,
+    username,
+    password,
+    timeout=5,
+):
+    """Authenticate once against each distinct MySQL endpoint."""
+    targets = sorted({(str(host), int(port)) for host, port in targets})
+
+    def probe(target):
+        host, port = target
+        try:
+            connection = mysql.connector.connect(
+                host=host,
+                port=port,
+                user=username,
+                password=password,
+                connection_timeout=timeout,
+            )
+            connection.close()
+            return None
+        except mysql.connector.Error as error:
+            return {
+                'host': host,
+                'port': port,
+                'error': str(error),
+            }
+
+    with ThreadPoolExecutor(max_workers=max(1, min(10, len(targets)))) as pool:
+        return [result for result in pool.map(probe, targets) if result]
+
+
 class DBConnectionManager:
     def __init__(self):
 

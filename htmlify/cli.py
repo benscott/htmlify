@@ -21,7 +21,11 @@ from htmlify.tasks.base import BaseTask
 from htmlify.tasks.migrate import MigrateTask
 from htmlify.tasks.sitemap import SiteMapTask
 from htmlify.tasks.sites_list import SitesListTask
-from htmlify.db import db_manager, unreachable_database_hosts
+from htmlify.db import (
+    database_authentication_errors,
+    db_manager,
+    unreachable_database_hosts,
+)
 from htmlify.config import logger
 from htmlify.inventory import build_sitemap_inventory
 from htmlify.progress import (
@@ -39,6 +43,30 @@ cli = typer.Typer()
 count = 0
 
 
+def _require_database_credentials():
+    missing = [
+        name for name, value in (
+            ('DB_USERNAME', config.DB_USERNAME),
+            ('DB_PASSWORD', config.DB_PASSWORD),
+        )
+        if not value
+    ]
+    if not missing:
+        return
+    typer.secho(
+        f'Missing database credentials: {", ".join(missing)}',
+        fg=typer.colors.RED,
+        bold=True,
+        err=True,
+    )
+    typer.secho(
+        f'Set them in {config.ROOT_DIR / ".env"} or in the process environment.',
+        fg=typer.colors.YELLOW,
+        err=True,
+    )
+    raise typer.Exit(1)
+
+
 def _concise_exception(error):
     outer_message = ' '.join(str(error).split()) or 'Unknown error'
     summary = f'{type(error).__name__}: {outer_message}'
@@ -54,6 +82,59 @@ def _concise_exception(error):
         cause_message = ' '.join(str(current).split()) or 'Unknown error'
         summary += f' (caused by {type(current).__name__}: {cause_message})'
     return summary
+
+
+def _concise_luigi_error(error):
+    """Reduce Luigi's JSON-encoded traceback to its final exception line."""
+    if not error:
+        return 'Unknown error'
+    if isinstance(error, str):
+        try:
+            decoded = json.loads(error)
+        except (json.JSONDecodeError, TypeError):
+            decoded = error
+        if isinstance(decoded, str):
+            error = decoded
+    lines = [line.strip() for line in str(error).splitlines() if line.strip()]
+    return lines[-1] if lines else 'Unknown error'
+
+
+def _sitemap_failures_from_result(result):
+    """Read failed sitemap tasks from the parent Luigi worker."""
+    if result is None or not getattr(result, 'worker', None):
+        return []
+
+    failed = {}
+    completed = set()
+    for task, status, _runnable in result.worker._add_task_history:
+        if not isinstance(task, SiteMapTask):
+            continue
+        if status == 'DONE':
+            completed.add(task.task_id)
+        elif status in {'FAILED', 'UNKNOWN'}:
+            failed[task.task_id] = task
+
+    failures = []
+    for task_id, task in sorted(
+        failed.items(), key=lambda item: str(item[1].domain),
+    ):
+        if task_id in completed:
+            continue
+        try:
+            response = result.worker._scheduler.fetch_error(task_id)
+            error = _concise_luigi_error(response.get('error'))
+        except Exception:
+            error = 'See the Luigi error log for the full traceback'
+        failures.append({'item': str(task.domain), 'error': error})
+    return failures
+
+
+def _merge_sitemap_failures(*failure_lists):
+    failures = {}
+    for failure_list in failure_lists:
+        for failure in failure_list:
+            failures[str(failure['item'])] = failure
+    return [failures[item] for item in sorted(failures)]
 
 
 def _print_sitemap_failures(failures):
@@ -209,6 +290,8 @@ def sitemaps(
         pending_domains = {
             task.domain for task in tasks if not task.complete()
         }
+        if pending_domains:
+            _require_database_credentials()
         selected_sites = sites[sites[domain_column].isin(pending_domains)]
         if ddev:
             database_targets = {(ddev['db_host'], ddev['db_port'])}
@@ -239,6 +322,33 @@ def sitemaps(
                     fg=typer.colors.YELLOW,
                     err=True,
                 )
+            raise typer.Exit(1)
+
+        authentication_errors = database_authentication_errors(
+            database_targets,
+            config.DB_USERNAME,
+            config.DB_PASSWORD,
+            timeout=min(connection_timeout, 10),
+        )
+        if authentication_errors:
+            typer.secho(
+                'Cannot authenticate to the required MySQL server(s):',
+                fg=typer.colors.RED,
+                bold=True,
+                err=True,
+            )
+            for target in authentication_errors:
+                typer.secho(
+                    f"  {target['host']}:{target['port']} — {target['error']}",
+                    fg=typer.colors.RED,
+                    err=True,
+                )
+            typer.secho(
+                f'Check DB_USERNAME and DB_PASSWORD in '
+                f'{config.ROOT_DIR / ".env"}.',
+                fg=typer.colors.YELLOW,
+                err=True,
+            )
             raise typer.Exit(1)
 
         config.DB_CONNECT_TIMEOUT = connection_timeout
@@ -306,7 +416,10 @@ def sitemaps(
                 log_level='INFO',
             )
         finally:
-            sitemap_failures = get_batch_failures('Sitemaps')
+            sitemap_failures = _merge_sitemap_failures(
+                get_batch_failures('Sitemaps'),
+                _sitemap_failures_from_result(result),
+            )
             typer.echo(
                 f'Sitemap task time: '
                 f'{format_duration(time.monotonic() - started)}'
@@ -523,6 +636,7 @@ def migrate(
     error_log_offset = error_log.stat().st_size if error_log.exists() else 0
 
     task = MigrateTask(**task_params)
+    _require_database_credentials()
     run_started = time.monotonic()
     progress_path = (
         config.PROCESSING_DATA_DIR

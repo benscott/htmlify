@@ -2,9 +2,14 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+import mysql.connector
 
 from htmlify import config
-from htmlify.db import DBConnectionManager, unreachable_database_hosts
+from htmlify.db import (
+    DBConnectionManager,
+    database_authentication_errors,
+    unreachable_database_hosts,
+)
 
 
 class TestDBConnectionManager(unittest.TestCase):
@@ -64,6 +69,41 @@ class TestDBConnectionManager(unittest.TestCase):
             'port': 3306,
             'error': 'timed out',
         }])
+        connection.close.assert_called_once_with()
+
+    def test_database_authentication_preflight_reports_login_errors(self):
+        connection = MagicMock()
+
+        def connect(**kwargs):
+            if kwargs['host'] == 'denied.example':
+                raise mysql.connector.ProgrammingError(
+                    "1045 (28000): Access denied for user 'archive'",
+                )
+            return connection
+
+        with patch(
+            'htmlify.db.mysql.connector.connect',
+            side_effect=connect,
+        ) as mysql_connect:
+            failures = database_authentication_errors({
+                ('online.example', 3306),
+                ('denied.example', 3307),
+                ('online.example', 3306),
+            }, username='archive', password='secret', timeout=4)
+
+        self.assertEqual(failures, [{
+            'host': 'denied.example',
+            'port': 3307,
+            'error': "1045 (28000): Access denied for user 'archive'",
+        }])
+        self.assertEqual(mysql_connect.call_count, 2)
+        mysql_connect.assert_any_call(
+            host='online.example',
+            port=3306,
+            user='archive',
+            password='secret',
+            connection_timeout=4,
+        )
         connection.close.assert_called_once_with()
 
 
