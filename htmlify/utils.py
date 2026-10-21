@@ -43,6 +43,11 @@ links = [
 links_with_domain = [f'(?:https?://[^/]+/)?/?{l}' for l in links]
 url_pattern = re.compile('|'.join(links_with_domain))
 
+
+class SiteUnavailableError(RuntimeError):
+    """Raised when the source site cannot be read before migration."""
+
+
 def is_decommisionned_link(link):
     return bool(url_pattern.search(link)) or 'raw-plain' in link
 
@@ -189,24 +194,35 @@ def is_under_maintenance(domain):
     if config.SOURCE_BASE_URL and domain == config.SOURCE_DOMAIN:
         return False
 
-    url = f'http://{domain}'
-    try:
-        r = requests.get(
-            url,
-            allow_redirects=True,
-            verify=False,
-            timeout=(3, min(config.REQUEST_TIMEOUT, 10)),
-        )
-    except requests.exceptions.RequestException as error:
-        config.logger.warning(
-            f'Could not check maintenance status for {domain}: {error}'
-        )
-        return False
+    url = f'{config.SCHEME}://{domain}'
+    last_error = None
+    last_status = None
+    for _attempt in range(2):
+        try:
+            r = requests.get(
+                url,
+                allow_redirects=True,
+                verify=False,
+                # Match the read timeout used for normal page rendering. The
+                # old ten-second probe produced false negatives for slow but
+                # otherwise readable Scratchpads.
+                timeout=(5, config.REQUEST_TIMEOUT),
+            )
+            last_status = r.status_code
+            if r.status_code == 503 and 'Site under maintenance' in r.text:
+                return True
+            r.raise_for_status()
+            return False
+        except requests.exceptions.RequestException as error:
+            last_error = error
 
-    if r.status_code == 503 and 'Site under maintenance' in r.text:
-        return True
-
-    return False
+    if last_status is not None:
+        raise SiteUnavailableError(
+            f'Source site {url} returned HTTP {last_status} after 2 attempts'
+        ) from last_error
+    raise SiteUnavailableError(
+        f'Cannot read source site {url} after 2 attempts: {last_error}'
+    ) from last_error
 
 if __name__ == "__main__":
     x = is_under_maintenance('dipteratyoryhma.myspecies.info')

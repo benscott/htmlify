@@ -74,6 +74,8 @@ class MigrateTask(BaseTask):
                 logger.debug(f'Skipping tranche 1 site {domain}')
                 continue
 
+            # This also raises SiteUnavailableError on a timeout or HTTP
+            # failure, preventing an unreadable site from being archived.
             if is_under_maintenance(domain):
                 logger.critical(f'Skipping site {domain} - under maintenance')
                 continue

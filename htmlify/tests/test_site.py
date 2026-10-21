@@ -9,10 +9,8 @@ from htmlify.tasks.sitemap import SiteMapTask
 
 class TestSiteTask(unittest.TestCase):
 
-    @patch('htmlify.tasks.site.is_under_maintenance', return_value=False)
     def test_requires_only_the_database_sitemap_and_does_not_propagate_force(
         self,
-        _maintenance,
     ):
         task = SiteTask(
             domain='gadus.myspecies.info',
@@ -25,8 +23,7 @@ class TestSiteTask(unittest.TestCase):
         self.assertIsInstance(dependency, SiteMapTask)
         self.assertFalse(dependency.force)
 
-    @patch('htmlify.tasks.site.is_under_maintenance', return_value=False)
-    def test_converts_sitemap_paths_to_canonical_urls(self, _maintenance):
+    def test_converts_sitemap_paths_to_canonical_urls(self):
         task = SiteTask(
             domain='gadus.myspecies.info',
             platform_path='/tmp/scratchpads',
@@ -41,8 +38,7 @@ class TestSiteTask(unittest.TestCase):
             'https://gadus.myspecies.info',
         )
 
-    @patch('htmlify.tasks.site.is_under_maintenance', return_value=False)
-    def test_selects_one_exact_page(self, _maintenance):
+    def test_selects_one_exact_page(self):
         task = SiteTask(
             domain='gadus.myspecies.info',
             platform_path='/tmp/scratchpads',
@@ -59,8 +55,7 @@ class TestSiteTask(unittest.TestCase):
             task.completion_output().path,
         )
 
-    @patch('htmlify.tasks.site.is_under_maintenance', return_value=False)
-    def test_selects_a_limited_page_prefix_batch(self, _maintenance):
+    def test_selects_a_limited_page_prefix_batch(self):
         task = SiteTask(
             domain='gadus.myspecies.info',
             platform_path='/tmp/scratchpads',
@@ -80,10 +75,8 @@ class TestSiteTask(unittest.TestCase):
             ['', 'taxonomy/term/8', 'taxonomy/term/9'],
         )
 
-    @patch('htmlify.tasks.site.is_under_maintenance', return_value=False)
     def test_prefers_an_existing_local_platform_sites_directory(
         self,
-        _maintenance,
     ):
         with TemporaryDirectory() as temporary_directory:
             platform = Path(temporary_directory) / 'scratchpads2'
@@ -101,10 +94,8 @@ class TestSiteTask(unittest.TestCase):
 
                 self.assertEqual(task.get_platform_sites_path(), expected)
 
-    @patch('htmlify.tasks.site.is_under_maintenance', return_value=False)
     def test_nested_aliases_use_an_index_symlink_for_the_parent(
         self,
-        _maintenance,
     ):
         with TemporaryDirectory() as temporary_directory:
             sites_root = Path(temporary_directory)
@@ -147,10 +138,8 @@ class TestSiteTask(unittest.TestCase):
                 )
                 self.assertTrue(task.site_aliases_complete())
 
-    @patch('htmlify.tasks.site.is_under_maintenance', return_value=False)
     def test_copy_across_assets_preserves_generated_facet_indexes(
         self,
-        _maintenance,
     ):
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

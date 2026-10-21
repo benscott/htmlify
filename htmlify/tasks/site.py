@@ -38,7 +38,7 @@ from htmlify.config import CRAWL_SITES, SITES_DIR, ASSETS_DIR, TEMPLATE_DIR, DB_
 from htmlify.tasks.base import BaseTask
 from htmlify.tasks.page import PageTask
 from htmlify.stack import UniqueStack
-from htmlify.utils import get_soup, get_first_directory, get_site_aliases, is_under_maintenance
+from htmlify.utils import get_soup, get_first_directory, get_site_aliases
 from htmlify.tasks.sitemap import SiteMapTask
 from htmlify.url import URL
 from htmlify.db import db_manager
@@ -57,11 +57,6 @@ class SiteTask(BaseTask):
     page_limit = luigi.OptionalIntParameter(default=None)
     page_offset = luigi.IntParameter(default=0)
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)  
-        if is_under_maintenance(self.domain):
-            raise Exception(f'{self.domain} is under maintenance')
-    
     def requires(self):      
         # The sitemap is assembled from Drupal's database, including content,
         # menu links, and compiled View routes. No recursive site crawl is

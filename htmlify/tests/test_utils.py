@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 import requests
 
 from htmlify import config
-from htmlify.utils import is_under_maintenance, request
+from htmlify.utils import SiteUnavailableError, is_under_maintenance, request
 
 
 class TestMaintenanceCheck(unittest.TestCase):
@@ -24,11 +24,36 @@ class TestMaintenanceCheck(unittest.TestCase):
         get.assert_not_called()
 
     @patch('htmlify.utils.requests.get', side_effect=requests.exceptions.ReadTimeout)
-    def test_timeout_does_not_abort_migration_scheduling(self, _get):
+    def test_timeout_fails_the_availability_check(self, get):
         config.SOURCE_DOMAIN = None
         config.SOURCE_BASE_URL = None
 
+        with self.assertRaisesRegex(
+            SiteUnavailableError,
+            'Cannot read source site',
+        ):
+            is_under_maintenance('gadus.myspecies.info')
+
+        self.assertEqual(
+            get.call_args.args[0],
+            f'{config.SCHEME}://gadus.myspecies.info',
+        )
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual(
+            get.call_args.kwargs['timeout'],
+            (5, config.REQUEST_TIMEOUT),
+        )
+
+    @patch('htmlify.utils.requests.get')
+    def test_transient_timeout_is_retried(self, get):
+        config.SOURCE_DOMAIN = None
+        config.SOURCE_BASE_URL = None
+        response = Mock(status_code=200, text='Site content')
+        response.raise_for_status.return_value = None
+        get.side_effect = [requests.exceptions.ReadTimeout(), response]
+
         self.assertFalse(is_under_maintenance('gadus.myspecies.info'))
+        self.assertEqual(get.call_count, 2)
 
     @patch('htmlify.utils.requests.get')
     def test_maintenance_response_is_detected(self, get):
@@ -40,6 +65,22 @@ class TestMaintenanceCheck(unittest.TestCase):
         )
 
         self.assertTrue(is_under_maintenance('gadus.myspecies.info'))
+
+    @patch('htmlify.utils.requests.get')
+    def test_http_error_fails_the_availability_check(self, get):
+        config.SOURCE_DOMAIN = None
+        config.SOURCE_BASE_URL = None
+        response = Mock(status_code=502, text='Bad gateway')
+        response.raise_for_status.side_effect = requests.exceptions.HTTPError()
+        get.return_value = response
+
+        with self.assertRaisesRegex(
+            SiteUnavailableError,
+            'returned HTTP 502 after 2 attempts',
+        ):
+            is_under_maintenance('gadus.myspecies.info')
+
+        self.assertEqual(get.call_count, 2)
 
 
 class TestLocalRequestCache(unittest.TestCase):
