@@ -408,6 +408,8 @@ class TestSpeciesPage(unittest.TestCase):
         self.assertIn('A description', panels[0].get_text())
         self.assertEqual(soup.get_text().count('A description'), 1)
         self.assertIsNotNone(panels[1].find('img', src='/media.jpg'))
+        self.assertIsNone(panels[0].find('h2', recursive=False))
+        self.assertIsNone(panels[1].find('h2', recursive=False))
         self.assertIsNone(
             soup.select_one('[data-species-tab="maps"]')
         )
@@ -468,3 +470,41 @@ class TestSpeciesPage(unittest.TestCase):
 
         self.assertFalse(PageTask._species_panel_has_content(empty))
         self.assertTrue(PageTask._species_panel_has_content(populated))
+
+    def test_final_species_panel_pruning_removes_content_lost_later(self):
+        task = PageTask(
+            url='https://abrusinthailand.myspecies.info/taxonomy/term/74',
+            output_dir=Path('/tmp/abrus-species-test'),
+        )
+        soup = BeautifulSoup(
+            '''
+            <div class="tabs htmlify-species-tabs"><ul role="tablist">
+              <li><a class="active" data-species-tab="descriptions"
+                aria-selected="true">Descriptions</a></li>
+              <li><a data-species-tab="media"
+                aria-selected="false">Media</a></li>
+            </ul></div>
+            <section class="htmlify-species-panel"
+              data-species-tab="descriptions"><h2>Descriptions</h2></section>
+            <section class="htmlify-species-panel"
+              data-species-tab="media"><h2>Media</h2>
+              <img src="/media.jpg"></section>
+            ''',
+            'html.parser',
+        )
+
+        task._prune_empty_species_panels(soup)
+
+        self.assertIsNone(
+            soup.select_one('[data-species-tab="descriptions"]')
+        )
+        media_panel = soup.select_one(
+            '.htmlify-species-panel[data-species-tab="media"]'
+        )
+        self.assertIsNotNone(media_panel)
+        self.assertIsNone(media_panel.find('h2', recursive=False))
+        media_link = soup.select_one(
+            '.htmlify-species-tabs a[data-species-tab="media"]'
+        )
+        self.assertIn('active', media_link['class'])
+        self.assertEqual(media_link['aria-selected'], 'true')

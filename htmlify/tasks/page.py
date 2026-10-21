@@ -69,7 +69,7 @@ from htmlify.taxonomy import (
 )
 
 
-SPECIES_PAGE_VERSION = '4'
+SPECIES_PAGE_VERSION = '5'
 SKIPPED_PAGE_VERSION = '3'
 FACET_PAGE_VERSION = '11'
 STATIC_ASSET_VERSION = '7'
@@ -207,6 +207,7 @@ class PageTask(BaseTask):
         self.disable_autocomplete(soup)
 
         self.remove_feeds(soup)
+        self._prune_empty_species_panels(soup)
 
         # Create a new link tag for the stylesheet
         if soup.head:
@@ -514,6 +515,57 @@ class PageTask(BaseTask):
             if found_tabs:
                 child.extract()
 
+    def _prune_empty_species_panels(self, soup):
+        """Remove empty tabs after all page and asset processing is finished."""
+        tabs_container = soup.select_one('.htmlify-species-tabs')
+        if not tabs_container:
+            return
+
+        for panel in list(soup.select('.htmlify-species-panel')):
+            # The selected tab already names the section, so a repeated panel
+            # heading adds no useful information.
+            heading = panel.find('h2', recursive=False)
+            if heading:
+                heading.decompose()
+
+            if self._species_panel_has_content(panel):
+                continue
+
+            slug = panel.get('data-species-tab')
+            link = next(
+                (
+                    candidate
+                    for candidate in tabs_container.select(
+                        'a[data-species-tab]'
+                    )
+                    if candidate.get('data-species-tab') == slug
+                ),
+                None,
+            )
+            if link:
+                item = link.find_parent('li')
+                (item or link).decompose()
+            panel.decompose()
+
+        links = tabs_container.select('a[data-species-tab]')
+        if not links:
+            tabs_container.decompose()
+            return
+
+        for position, link in enumerate(links):
+            classes = [
+                name for name in link.get('class', [])
+                if name != 'active'
+            ]
+            if position == 0:
+                classes.append('active')
+            if classes:
+                link['class'] = classes
+            elif link.has_attr('class'):
+                del link['class']
+            link['aria-selected'] = 'true' if position == 0 else 'false'
+            link['tabindex'] = '0' if position == 0 else '-1'
+
     def species_page(self, soup, tid, vid):
         """Combine the enabled Drupal species tabs into one static page."""
         base_path = f'/taxonomy/term/{tid}'
@@ -589,9 +641,6 @@ class PageTask(BaseTask):
             section['class'] = ['htmlify-species-panel']
             section['id'] = f"species-tab-{tab['slug']}"
             section['data-species-tab'] = tab['slug']
-            heading = soup.new_tag('h2')
-            heading.string = tab['label']
-            section.append(heading)
 
             tab_content = (
                 self._species_tab_content(tab_soup) if tab_soup else []
