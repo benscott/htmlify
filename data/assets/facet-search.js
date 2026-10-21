@@ -337,23 +337,30 @@
     }
     visible.forEach(function (record) {
       var item = document.createElement('li');
+      var thumbnailDisplay = data.page && data.page.display === 'thumbnails';
       if (record.thumbnail) {
         var imageLink = document.createElement('a');
         imageLink.href = record.url;
         imageLink.className = 'htmlify-facet-result-image';
+        imageLink.setAttribute('aria-label', record.title);
+        imageLink.title = record.title;
         var image = document.createElement('img');
         image.src = record.thumbnail;
-        image.alt = '';
+        image.alt = record.title;
+        image.width = 85;
+        image.height = 85;
         image.loading = 'lazy';
         imageLink.appendChild(image);
         item.appendChild(imageLink);
       }
-      var title = document.createElement('a');
-      title.href = record.url;
-      title.textContent = record.title;
-      title.className = 'htmlify-facet-result-title';
-      item.appendChild(title);
-      appendMetadata(item, record);
+      if (!thumbnailDisplay || !record.thumbnail) {
+        var title = document.createElement('a');
+        title.href = record.url;
+        title.textContent = record.title;
+        title.className = 'htmlify-facet-result-title';
+        item.appendChild(title);
+      }
+      if (!thumbnailDisplay) appendMetadata(item, record);
       resultsElement.appendChild(item);
     });
     renderPagination(totalPages);

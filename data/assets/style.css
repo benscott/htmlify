@@ -103,29 +103,28 @@
 
 .htmlify-facet-results.is-thumbnails {
     display: grid;
-    gap: 1.25em;
-    grid-template-columns: repeat(auto-fill, minmax(10em, 1fr));
+    gap: 10px;
+    grid-template-columns: repeat(auto-fill, 85px);
     list-style: none;
     padding-left: 0;
 }
 
 .htmlify-facet-results.is-thumbnails li {
-    border: 1px solid #d6d6d6;
     margin: 0;
-    padding: 0.65em;
+    padding: 0;
 }
 
 .htmlify-facet-result-image {
     background: #eee;
     display: block;
-    margin: -0.65em -0.65em 0.65em;
 }
 
 .htmlify-facet-result-image img {
     aspect-ratio: 1 / 1;
     display: block;
+    height: 85px;
     object-fit: cover;
-    width: 100%;
+    width: 85px;
 }
 
 .htmlify-facet-result-title {
