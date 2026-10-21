@@ -8,6 +8,45 @@ import typer
 from htmlify import config
 
 
+def _build_site_lookup(sites, aliases=None):
+    """Index database details by both hosted domains and site aliases."""
+    columns = ['db_name', 'db_host']
+    original = sites[['domain', *columns]].rename(
+        columns={'domain': 'lookup_domain'},
+    )
+    lookups = [original]
+
+    if (
+        aliases is not None
+        and 'nid' in sites.columns
+        and {'nid', 'alias'} <= set(aliases.columns)
+    ):
+        site_details = sites[['nid', *columns]].copy()
+        alias_details = aliases[['nid', 'alias']].copy()
+        # vhosts.csv contains blank NIDs, so pandas normally reads that column
+        # as floats while the aliases file uses integers. Normalise both before
+        # joining them.
+        site_details['nid'] = pd.to_numeric(
+            site_details['nid'], errors='coerce',
+        ).astype('Int64')
+        alias_details['nid'] = pd.to_numeric(
+            alias_details['nid'], errors='coerce',
+        ).astype('Int64')
+        alias_details = alias_details.merge(site_details, on='nid', how='inner')
+        alias_details = alias_details.rename(
+            columns={'alias': 'lookup_domain'},
+        )
+        lookups.append(alias_details[['lookup_domain', *columns]])
+
+    lookup = pd.concat(lookups, ignore_index=True)
+    lookup = lookup.dropna(subset=['lookup_domain'])
+    lookup['lookup_domain'] = lookup['lookup_domain'].astype(str).str.strip()
+    lookup = lookup[lookup.lookup_domain != '']
+    # Prefer the hostname from vhosts.csv if a malformed alias duplicates it.
+    lookup = lookup.drop_duplicates('lookup_domain', keep='first')
+    return lookup.set_index('lookup_domain')[columns]
+
+
 def unreachable_database_hosts(targets, timeout=5):
     """Return TCP database endpoints that cannot be reached quickly."""
     targets = sorted({(str(host), int(port)) for host, port in targets})
@@ -65,15 +104,28 @@ class DBConnectionManager:
     def __init__(self):
 
         # Load the hosts data
-        df = pd.read_csv(config.DATA_DIR / 'vhosts.csv', usecols=['domain', 'db_name', 'db_host'])
-        self._sites = df.set_index('domain')[['db_name','db_host']]
+        sites = pd.read_csv(config.DATA_DIR / 'vhosts.csv')
+        aliases_path = config.DATA_DIR / 'static-site-aliases.csv'
+        aliases = None
+        if aliases_path.is_file():
+            aliases = pd.read_csv(
+                aliases_path,
+                sep='\t',
+                names=['nid', 'alias'],
+            )
+        self._sites = _build_site_lookup(sites, aliases)
         self._connections = {}  # Dictionary to hold multiple connections
 
     def _get_site(self, domain):
-        site = self._sites.loc[domain, ['db_name', 'db_host']]
+        try:
+            site = self._sites.loc[domain, ['db_name', 'db_host']]
+        except KeyError as error:
+            raise LookupError(
+                f'No database mapping for domain {domain}',
+            ) from error
 
         if site.empty:
-            raise Exception(f'No domain matching {domain}')          
+            raise LookupError(f'No database mapping for domain {domain}')
         
         return tuple(site)
 

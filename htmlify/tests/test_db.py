@@ -7,12 +7,38 @@ import mysql.connector
 from htmlify import config
 from htmlify.db import (
     DBConnectionManager,
+    _build_site_lookup,
     database_authentication_errors,
     unreachable_database_hosts,
 )
 
 
 class TestDBConnectionManager(unittest.TestCase):
+
+    def test_site_lookup_accepts_custom_and_resolved_domains(self):
+        sites = pd.DataFrame([{
+            'domain': 'tipos.miza-ucv.org.ve',
+            'db_name': 'tiposmizaucvor_0',
+            'db_host': '157.140.2.171',
+            # Blank values elsewhere cause this real CSV column to be float.
+            'nid': 4254.0,
+        }])
+        aliases = pd.DataFrame([{
+            'nid': 4254,
+            'alias': 'tipos-miza-ucv.myspecies.info',
+        }])
+
+        lookup = _build_site_lookup(sites, aliases)
+
+        expected = ('tiposmizaucvor_0', '157.140.2.171')
+        self.assertEqual(
+            tuple(lookup.loc['tipos.miza-ucv.org.ve']),
+            expected,
+        )
+        self.assertEqual(
+            tuple(lookup.loc['tipos-miza-ucv.myspecies.info']),
+            expected,
+        )
 
     def test_local_source_does_not_require_canonical_domain_in_registry(self):
         manager = DBConnectionManager()
