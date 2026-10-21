@@ -1,6 +1,7 @@
 import luigi
 import mysql.connector
 import itertools
+import phpserialize
 import yaml
 import pandas as pd
 
@@ -12,7 +13,7 @@ from htmlify.db import db_manager
 from htmlify.taxonomy import get_biological_vids
 
 
-SITEMAP_VERSION = '3'
+SITEMAP_VERSION = '4'
 
 class SiteMapTask(BaseTask):
     
@@ -79,6 +80,7 @@ class SiteMapTask(BaseTask):
             self.get_user_urls(),
             self.get_comment_urls(),
             self.get_blog_urls(),
+            self.get_forum_urls(),
             self.get_menu_urls(),
             self.get_view_urls(),
             # BUGFIX: Moved to crating symlinks
@@ -158,6 +160,32 @@ class SiteMapTask(BaseTask):
             urls.append(f'blog/{uid[0]}')
 
         return urls    
+
+    def get_forum_urls(self):
+        """Return Drupal forum routes for every configured forum term."""
+        row = self._query_one(
+            'SELECT value FROM variable '
+            'WHERE name = "forum_nav_vocabulary"',
+        )
+        if not row or not row[0]:
+            return []
+
+        try:
+            forum_vid = int(phpserialize.loads(row[0]))
+        except (TypeError, ValueError):
+            logger.warning(
+                'Could not decode forum vocabulary for %s',
+                self.domain,
+            )
+            return []
+
+        terms = self._query(f"""
+            SELECT tid
+            FROM taxonomy_term_data
+            WHERE vid = {forum_vid}
+            ORDER BY tid
+        """)
+        return [f'forum/{tid}' for tid, in terms]
     
     def get_user_urls(self):
         urls = []

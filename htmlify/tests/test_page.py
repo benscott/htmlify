@@ -235,7 +235,7 @@ class TestFacetSearch(unittest.TestCase):
         self.assertIsNotNone(controls.find_parent(id='region-sidebar'))
         self.assertIsNotNone(browser.find_parent(id='region-content'))
         self.assertTrue(
-            soup.find('script', src='/assets/facet-search.js?v=6')['defer']
+            soup.find('script', src='/assets/facet-search.js?v=7')['defer']
         )
         self.assertIsNone(soup.select_one('.block-facetapi'))
         self.assertIsNone(soup.select_one('.block-scratchpads-biblio-search'))
@@ -276,6 +276,22 @@ class TestFacetSearch(unittest.TestCase):
 
 
 class TestSpeciesPage(unittest.TestCase):
+
+    def test_biological_term_does_not_become_a_generic_facet_page(self):
+        self.assertFalse(
+            PageTask._should_build_facet_page(
+                species_vid=4,
+                facet_definitions=[],
+                configured_facet_page=True,
+            )
+        )
+        self.assertTrue(
+            PageTask._should_build_facet_page(
+                species_vid=None,
+                facet_definitions=[],
+                configured_facet_page=True,
+            )
+        )
 
     def test_expands_slickgrid_before_copying_a_species_tab(self):
         task = PageTask(
@@ -340,6 +356,7 @@ class TestSpeciesPage(unittest.TestCase):
               <section class="block block-tinytax" id="block-tinytax-4">
                 <h2>Invasive Species</h2><div class="content"></div>
               </section>
+              <section class="block-facetapi">Live Solr facet</section>
               <div id="region-content" class="region region-content">
                 <div class="region-content-inner">
                   <h1 id="page-title">Anacharis nuttallii</h1>
@@ -382,8 +399,16 @@ class TestSpeciesPage(unittest.TestCase):
             '/assets/taxonomy/4.json',
         )
         self.assertIsNone(soup.select_one('.block-tinytax'))
+        self.assertIsNone(soup.select_one('.block-facetapi'))
+        self.assertEqual(
+            soup.select_one('.htmlify-taxonomy-search input')['name'],
+            'q',
+        )
         self.assertEqual(
             soup.select_one('.htmlify-species-tabs a')['href'],
             '#species-tab-descriptions',
+        )
+        self.assertIsNotNone(
+            soup.find('script', src='/assets/species-page.js?v=7')
         )
         write_index.assert_called_once()

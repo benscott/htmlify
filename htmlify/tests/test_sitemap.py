@@ -78,6 +78,28 @@ class TestSiteMapRoutes(unittest.TestCase):
                 ],
             )
 
+    def test_forum_urls_use_the_configured_forum_vocabulary(self):
+        task = SiteMapTask(domain='abrusinthailand.myspecies.info')
+
+        with (
+            patch.object(task, '_query_one', return_value=(b'i:17;',)),
+            patch.object(task, '_query', return_value=[(81,), (92,)]) as query,
+        ):
+            self.assertEqual(task.get_forum_urls(), ['forum/81', 'forum/92'])
+
+        self.assertIn('WHERE vid = 17', query.call_args.args[0])
+
+    def test_forum_urls_are_empty_when_forum_is_not_configured(self):
+        task = SiteMapTask(domain='gadus.myspecies.info')
+
+        with (
+            patch.object(task, '_query_one', return_value=None),
+            patch.object(task, '_query') as query,
+        ):
+            self.assertEqual(task.get_forum_urls(), [])
+
+        query.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -48,17 +48,42 @@
   function initialiseTree(root) {
     var status = root.querySelector('.htmlify-taxonomy-status');
     var container = root.querySelector('.htmlify-taxonomy-list');
+    var form = root.querySelector('.htmlify-taxonomy-search');
+    var queryInput = root.querySelector('#htmlify-taxonomy-query');
+    var clearButton = root.querySelector('.htmlify-taxonomy-clear');
     var current = String(root.getAttribute('data-current-tid') || '');
+    var taxonomy = null;
+
+    function clean(value) {
+      return String(value || '').trim().toLocaleLowerCase();
+    }
+
+    function readQuery() {
+      return new URLSearchParams(window.location.search).get('q') || '';
+    }
+
+    function writeQuery(push) {
+      var url = new URL(window.location.href);
+      var query = queryInput ? queryInput.value.trim() : '';
+      if (query) url.searchParams.set('q', query);
+      else url.searchParams.delete('q');
+      window.history[push ? 'pushState' : 'replaceState'](
+        {}, '', url.pathname + url.search + url.hash
+      );
+    }
 
     function render(data) {
       var children = {};
       var parents = {};
+      var nodesById = {};
       data.nodes.forEach(function (node) {
         var parent = String(node.parent || 0);
+        var id = String(node.id);
         if (!children[parent]) children[parent] = [];
         children[parent].push(node);
-        if (!parents[String(node.id)]) parents[String(node.id)] = [];
-        parents[String(node.id)].push(parent);
+        if (!parents[id]) parents[id] = [];
+        parents[id].push(parent);
+        nodesById[id] = node;
       });
 
       var ancestors = {};
@@ -70,10 +95,33 @@
         pending = pending.concat(parents[parent] || []);
       }
 
+      var query = clean(queryInput ? queryInput.value : '');
+      var terms = query.split(/\s+/).filter(Boolean);
+      var matches = [];
+      var visible = {};
+      if (terms.length) {
+        Object.keys(nodesById).forEach(function (id) {
+          var name = clean(nodesById[id].name);
+          if (!terms.every(function (term) {
+            return name.indexOf(term) !== -1;
+          })) return;
+          matches.push(id);
+          visible[id] = true;
+          var matchParents = (parents[id] || []).slice();
+          while (matchParents.length) {
+            var matchParent = matchParents.pop();
+            if (matchParent === '0' || visible[matchParent]) continue;
+            visible[matchParent] = true;
+            matchParents = matchParents.concat(parents[matchParent] || []);
+          }
+        });
+      }
+
       function branch(parent, lineage) {
         var list = document.createElement('ul');
         (children[parent] || []).forEach(function (node) {
           var id = String(node.id);
+          if (terms.length && !visible[id]) return;
           if (lineage[id]) return;
           var item = document.createElement('li');
           var link = document.createElement('a');
@@ -87,7 +135,7 @@
           var descendants = children[id] || [];
           if (descendants.length) {
             var details = document.createElement('details');
-            details.open = id === current || !!ancestors[id];
+            details.open = terms.length > 0 || id === current || !!ancestors[id];
             var summary = document.createElement('summary');
             summary.appendChild(link);
             details.appendChild(summary);
@@ -105,15 +153,49 @@
 
       container.textContent = '';
       container.appendChild(branch('0', {}));
-      status.remove();
+      if (terms.length) {
+        status.hidden = false;
+        status.textContent = matches.length
+          ? matches.length + (matches.length === 1
+            ? ' matching taxon.' : ' matching taxa.')
+          : 'No matching taxa found.';
+      } else {
+        status.hidden = true;
+        status.textContent = '';
+      }
     }
+
+    if (form && queryInput && clearButton) {
+      form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        writeQuery(true);
+        if (taxonomy) render(taxonomy);
+      });
+
+      clearButton.addEventListener('click', function () {
+        queryInput.value = '';
+        writeQuery(true);
+        if (taxonomy) render(taxonomy);
+        queryInput.focus();
+      });
+    }
+
+    window.addEventListener('popstate', function () {
+      if (queryInput) queryInput.value = readQuery();
+      if (taxonomy) render(taxonomy);
+    });
+
+    if (queryInput) queryInput.value = readQuery();
 
     fetch(root.getAttribute('data-index-url'))
       .then(function (response) {
         if (!response.ok) throw new Error('HTTP ' + response.status);
         return response.json();
       })
-      .then(render)
+      .then(function (data) {
+        taxonomy = data;
+        render(data);
+      })
       .catch(function () {
         status.textContent = 'The taxonomy tree could not be loaded.';
       });

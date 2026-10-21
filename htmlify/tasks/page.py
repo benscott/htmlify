@@ -69,10 +69,10 @@ from htmlify.taxonomy import (
 )
 
 
-SPECIES_PAGE_VERSION = '2'
+SPECIES_PAGE_VERSION = '3'
 SKIPPED_PAGE_VERSION = '3'
 FACET_PAGE_VERSION = '11'
-STATIC_ASSET_VERSION = '6'
+STATIC_ASSET_VERSION = '7'
 PAGE_ARCHIVE_VERSION = '1'
 
 class PageTask(BaseTask):
@@ -160,7 +160,11 @@ class PageTask(BaseTask):
             if facet_definitions or configured_facet_page:
                 result_hints = extract_result_hints(soup)
 
-        is_facet_page = bool(facet_definitions) or configured_facet_page
+        is_facet_page = self._should_build_facet_page(
+            species_vid,
+            facet_definitions,
+            configured_facet_page,
+        )
 
         # Do this before expanding widgets or downloading assets. Template-only
         # taxonomy tabs are common and should not cost a full page conversion.
@@ -460,6 +464,21 @@ class PageTask(BaseTask):
     def species_page(self, soup, tid, vid):
         """Combine the enabled Drupal species tabs into one static page."""
         base_path = f'/taxonomy/term/{tid}'
+
+        # Solr facet blocks on biological taxonomy pages search a separate
+        # result index, not the taxonomy hierarchy. They are misleading once
+        # archived and used to produce an empty generic facet browser here.
+        # The static taxonomy tree gets its own database-backed filter below.
+        for selector in (
+            '.block-facetapi',
+            '.block-scratchpads-biblio-search',
+            '.apachesolr-browse-blocks',
+            '.htmlify-facet-controls',
+            '.htmlify-facet-browser',
+        ):
+            for block in soup.select(selector):
+                block.decompose()
+
         tabs_container = soup.select_one('#region-content div.tabs')
         tabs_list = tabs_container.select_one('ul.tabs') if tabs_container else None
         if not tabs_container or not tabs_list:
@@ -566,10 +585,11 @@ class PageTask(BaseTask):
             content_region['data-htmlify-species-version'] = SPECIES_PAGE_VERSION
 
         self._replace_taxonomy_tree(soup, tid, vid)
-        if not soup.find('script', src='/assets/species-page.js'):
+        species_script = f'/assets/species-page.js?v={STATIC_ASSET_VERSION}'
+        if not soup.find('script', src=species_script):
             script = soup.new_tag(
                 'script',
-                src='/assets/species-page.js',
+                src=species_script,
                 defer=True,
             )
             if soup.body:
@@ -600,12 +620,36 @@ class PageTask(BaseTask):
         if not content:
             content = block
         content.clear()
+        form = soup.new_tag('form')
+        form['class'] = ['htmlify-taxonomy-search']
+        form['role'] = 'search'
+        label = soup.new_tag('label', attrs={'for': 'htmlify-taxonomy-query'})
+        label.string = 'Find a taxon'
+        controls = soup.new_tag('div')
+        controls['class'] = ['htmlify-taxonomy-search-controls']
+        query = soup.new_tag(
+            'input',
+            id='htmlify-taxonomy-query',
+            attrs={
+                'name': 'q',
+                'type': 'search',
+                'autocomplete': 'off',
+            },
+        )
+        submit = soup.new_tag('button', type='submit')
+        submit.string = 'Filter'
+        clear = soup.new_tag('button', type='button')
+        clear['class'] = ['htmlify-taxonomy-clear']
+        clear.string = 'Clear'
+        controls.extend([query, submit, clear])
+        form.extend([label, controls])
         status = soup.new_tag('p')
         status['class'] = ['htmlify-taxonomy-status']
+        status['aria-live'] = 'polite'
         status.string = 'Loading taxonomy…'
         tree = soup.new_tag('div')
         tree['class'] = ['htmlify-taxonomy-list']
-        content.extend([status, tree])
+        content.extend([form, status, tree])
 
     def _write_species_tab_redirects(self, soup, tid):
         for link in soup.select('.htmlify-species-tabs a[data-species-tab]'):
@@ -1030,6 +1074,17 @@ class PageTask(BaseTask):
     def _is_search_page(self):
         path = self._url.path or ''
         return path == '/search' or path.startswith('/search/')
+
+    @staticmethod
+    def _should_build_facet_page(
+        species_vid,
+        facet_definitions,
+        configured_facet_page,
+    ):
+        """Keep biological term pages on their taxonomy-specific UI."""
+        return not species_vid and (
+            bool(facet_definitions) or configured_facet_page
+        )
 
     def _is_unavailable_search_page(self, soup):
         if main_content := soup.find('section', id='section-content'):

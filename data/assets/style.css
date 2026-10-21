@@ -192,6 +192,28 @@
     padding-left: 1em;
 }
 
+.htmlify-taxonomy-search {
+    margin-bottom: 1em;
+}
+
+.htmlify-taxonomy-search > label {
+    display: block;
+    font-weight: bold;
+    margin-bottom: 0.35em;
+}
+
+.htmlify-taxonomy-search-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35em;
+}
+
+.htmlify-taxonomy-search input[type="search"] {
+    box-sizing: border-box;
+    flex: 1 1 10em;
+    min-width: 0;
+}
+
 .htmlify-taxonomy-tree > .htmlify-taxonomy-list > ul {
     padding-left: 0;
 }

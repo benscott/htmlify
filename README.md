@@ -79,8 +79,11 @@ sitemaps, URLs, and each archive state. Before starting, an all-sites build
 checks that each production MySQL host is reachable and gives a museum-VPN
 message instead of launching hundreds of tasks that will time out. Connection
 attempts default to ten seconds and can be changed with
-`--connection-timeout SECONDS`. Progress output counts successful and failed
-sites and estimates the remaining time. Each failure is printed immediately as
+`--connection-timeout SECONDS`. It also requires `DB_USERNAME` and
+`DB_PASSWORD` in the project `.env` (or process environment), and verifies the
+login once per distinct database server before scheduling work. Progress output
+counts successful and failed sites and estimates the remaining time. Each
+failure is printed immediately as
 `SITEMAP FAILED: domain — exception`; the end-of-run summary repeats the first
 20 failures and points to `data/.log/error.log` for full tracebacks. JSON
 inventory reports also include the complete concise failure list.
