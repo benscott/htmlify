@@ -620,10 +620,6 @@ def migrate(
     def on_page_success(task):
         record_page_completion(task.domain, processed=True)
 
-    @PageTask.event_handler(luigi.Event.DEPENDENCY_PRESENT)
-    def on_page_already_complete(task):
-        record_page_completion(task.domain, processed=False)
-
     @BaseTask.event_handler(luigi.Event.FAILURE)
     def report_dependency_failure(task, exception):
         typer.secho(

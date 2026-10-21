@@ -138,6 +138,36 @@ class TestSiteTask(unittest.TestCase):
                 )
                 self.assertTrue(task.site_aliases_complete())
 
+    def test_legacy_colorbox_directory_links_missing_ids_to_file_pages(self):
+        with TemporaryDirectory() as temporary_directory:
+            sites_root = Path(temporary_directory)
+            site_root = sites_root / 'aba.myspecies.info'
+            canonical_page = site_root / 'file' / '267'
+            canonical_page.mkdir(parents=True)
+            (canonical_page / 'index.html').write_text(
+                'canonical file', encoding='utf-8',
+            )
+            legacy_page = site_root / 'file-colorboxed' / '266'
+            legacy_page.mkdir(parents=True)
+            (legacy_page / 'index.html').write_text(
+                'existing popup', encoding='utf-8',
+            )
+
+            with patch('htmlify.tasks.site.SITES_DIR', sites_root):
+                task = SiteTask(
+                    domain='aba.myspecies.info',
+                    platform_path='/tmp/scratchpads',
+                )
+                task.create_file_colorbox_aliases()
+
+                compatibility_page = site_root / 'file-colorboxed' / '267'
+                self.assertTrue(compatibility_page.is_symlink())
+                self.assertEqual(
+                    compatibility_page.resolve(),
+                    canonical_page.resolve(),
+                )
+                self.assertTrue(task.file_colorbox_aliases_complete())
+
     def test_copy_across_assets_preserves_generated_facet_indexes(
         self,
     ):

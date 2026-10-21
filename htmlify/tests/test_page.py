@@ -12,6 +12,21 @@ from htmlify.tasks.page import PageTask
 
 class TestPageContent(unittest.TestCase):
 
+    def test_colorbox_file_link_uses_canonical_archived_file_page(self):
+        task = PageTask(
+            url='https://aba.myspecies.info/gallery',
+            output_dir='/tmp/site',
+        )
+        soup = BeautifulSoup(
+            '<a href="https://aba.myspecies.info/file-colorboxed/267">'
+            'View image</a>',
+            'html.parser',
+        )
+
+        task.process_links(soup)
+
+        self.assertEqual(soup.a['href'], '/file/267')
+
     def test_protocol_relative_ddev_asset_uses_canonical_request_url(self):
         task = PageTask(
             url='https://weevil.myspecies.info/taxonomy/term/8',

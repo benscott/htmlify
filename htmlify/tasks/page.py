@@ -749,6 +749,16 @@ class PageTask(BaseTask):
             if not url.is_site_internal_link():
                 continue
 
+            colorbox_file = re.fullmatch(
+                r'/file-colorboxed/(\d+)',
+                url.path or '',
+            )
+            if colorbox_file:
+                # The colorboxed route is a JavaScript popup presentation of
+                # the canonical file entity, which is already archived.
+                a['href'] = f'/file/{colorbox_file.group(1)}'
+                continue
+
             if url.has_multiple_facets():
                 logger.debug(f'Removing facet url {href}')
                 a.decompose()

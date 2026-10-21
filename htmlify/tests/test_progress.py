@@ -70,6 +70,21 @@ class TestProgress(unittest.TestCase):
             self.assertEqual(site['total'], 12)
             self.assertEqual(site['completed'], 1)
 
+    def test_initial_progress_counts_pages_already_on_disk(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / 'progress.json'
+            with redirect_stdout(io.StringIO()):
+                configure_progress(state_path, interval=60)
+                initialise_site_progress(
+                    'example.org', 10, completed=7, now=100,
+                )
+
+            site = json.loads(
+                state_path.read_text(encoding='utf-8')
+            )['sites']['example.org']
+            self.assertEqual(site['total'], 10)
+            self.assertEqual(site['completed'], 7)
+
     def test_batch_progress_reports_successes_failures_and_eta(self):
         with tempfile.TemporaryDirectory() as directory:
             state_path = Path(directory) / 'progress.json'

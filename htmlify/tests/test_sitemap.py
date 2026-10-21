@@ -23,6 +23,7 @@ class TestSiteMapRoutes(unittest.TestCase):
             'dwca-export/reference/csv',
             'search/ajax/results',
             'news/feed',
+            'file-colorboxed/99',
         ]
 
         for path in accepted:

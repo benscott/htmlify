@@ -269,6 +269,50 @@ class SiteTask(BaseTask):
                 target_is_directory=True,
             )
 
+    def create_file_colorbox_aliases(self):
+        """Keep legacy popup URLs working via canonical file pages."""
+        sites_dir = Path(self.output().path)
+        canonical_dir = sites_dir / 'file'
+        compatibility_dir = sites_dir / 'file-colorboxed'
+
+        if compatibility_dir.is_symlink() or not compatibility_dir.exists():
+            self._ensure_symlink(
+                compatibility_dir,
+                canonical_dir,
+                target_is_directory=True,
+            )
+            return
+
+        # A partially generated archive may already contain real popup page
+        # directories. Preserve those and fill only the missing IDs.
+        if compatibility_dir.is_dir() and canonical_dir.is_dir():
+            for canonical_file in canonical_dir.iterdir():
+                legacy_file = compatibility_dir / canonical_file.name
+                if not legacy_file.exists() and not legacy_file.is_symlink():
+                    self._ensure_symlink(
+                        legacy_file,
+                        canonical_file,
+                        target_is_directory=True,
+                    )
+
+    def file_colorbox_aliases_complete(self):
+        sites_dir = Path(self.output().path)
+        canonical_dir = sites_dir / 'file'
+        compatibility_dir = sites_dir / 'file-colorboxed'
+        if compatibility_dir.is_symlink():
+            return (
+                compatibility_dir.resolve(strict=False)
+                == canonical_dir.resolve(strict=False)
+            )
+        if not compatibility_dir.is_dir():
+            return False
+        if not canonical_dir.is_dir():
+            return True
+        return all(
+            (compatibility_dir / child.name).exists()
+            for child in canonical_dir.iterdir()
+        )
+
     def site_aliases_complete(self):
         sites_dir = Path(self.output().path)
         mappings, parent_aliases = self._alias_mappings()
@@ -341,9 +385,18 @@ class SiteTask(BaseTask):
             for link in links
             if self.url_is_valid_filename(self.path_to_url(link))
         ]
-        initialise_site_progress(self.domain, len(page_tasks))
-        if page_tasks:
-            yield page_tasks
+        pending_page_tasks = [
+            task for task in page_tasks if not task.complete()
+        ]
+        initialise_site_progress(
+            self.domain,
+            len(page_tasks),
+            completed=len(page_tasks) - len(pending_page_tasks),
+        )
+        if pending_page_tasks:
+            yield pending_page_tasks
+
+        self.create_file_colorbox_aliases()
 
         # Partial and whole-site runs have distinct completion targets, so a
         # filtered test can satisfy Luigi without marking the site complete.
@@ -410,6 +463,9 @@ class SiteTask(BaseTask):
                 for link in links
                 if self.url_is_valid_filename(self.path_to_url(link))
             )
+
+        if not self.file_colorbox_aliases_complete():
+            return False
 
         if not self.site_aliases_complete():
             return False

@@ -79,17 +79,22 @@ def _progress_message(domain, site, now):
     )
 
 
-def initialise_site_progress(domain, total, *, now=None):
+def initialise_site_progress(domain, total, *, completed=0, now=None):
     now = time.monotonic() if now is None else now
+    completed = max(0, min(int(completed), int(total)))
 
     def initialise(state):
         sites = state.setdefault('sites', {})
         if domain in sites:
             sites[domain]['total'] = total
-            return None
+            sites[domain]['completed'] = max(
+                sites[domain]['completed'],
+                completed,
+            )
+            return _progress_message(domain, sites[domain], now)
         site = {
             'total': total,
-            'completed': 0,
+            'completed': completed,
             'processed': 0,
             'started_at': now,
             'last_report_at': now,

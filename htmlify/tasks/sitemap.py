@@ -12,7 +12,7 @@ from htmlify.db import db_manager
 from htmlify.taxonomy import get_biological_vids
 
 
-SITEMAP_VERSION = '2'
+SITEMAP_VERSION = '3'
 
 class SiteMapTask(BaseTask):
     
@@ -33,6 +33,7 @@ class SiteMapTask(BaseTask):
         'devel',
         'dwca-export',
         'dwca_export',
+        'file-colorboxed',
     )
 
     excluded_path_parts = {
@@ -75,7 +76,6 @@ class SiteMapTask(BaseTask):
             self.get_node_urls(),
             self.get_file_urls(),
             self.get_classification_urls(),
-            self.get_image_urls(),
             self.get_user_urls(),
             self.get_comment_urls(),
             self.get_blog_urls(),
@@ -143,14 +143,6 @@ class SiteMapTask(BaseTask):
         return urls
 
 
-    def get_image_urls(self):
-        urls = []
-        result = self._query(f"SELECT fid, uri FROM file_managed WHERE filemime LIKE 'image/%'")
-        for fid, uri in result:
-            urls.append(f'file-colorboxed/{fid}')    
-
-        return urls
-    
     def get_comment_urls(self):
         urls = []
         result = self._query(f"SELECT c.cid, c.nid FROM comment c INNER JOIN node n ON c.nid = n.nid WHERE c.status = 1 AND n.status = 1")
