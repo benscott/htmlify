@@ -53,6 +53,26 @@ def sitemap_url_count(path):
     path = Path(path)
     if not path.is_file():
         return None
+
+    # SiteMapTask writes a top-level YAML sequence with one URL per line. Count
+    # that common format without constructing a potentially very large Python
+    # list. Fall back to the YAML parser for hand-written or legacy formats so
+    # that validation behaviour remains unchanged.
+    url_count = 0
+    simple_sequence = True
+    with path.open(encoding='utf-8') as sitemap:
+        for line in sitemap:
+            stripped = line.strip()
+            if not stripped or stripped.startswith('#'):
+                continue
+            if line.startswith('- '):
+                url_count += 1
+                continue
+            simple_sequence = False
+            break
+    if simple_sequence:
+        return url_count
+
     with path.open(encoding='utf-8') as sitemap:
         urls = yaml.safe_load(sitemap) or []
     if not isinstance(urls, list):
@@ -102,9 +122,12 @@ def build_sitemap_inventory(
     sites_dir,
     processing_dir,
     archive_version,
+    progress=None,
 ):
     entries = []
-    for domain in sorted(set(str(domain) for domain in domains)):
+    unique_domains = sorted(set(str(domain) for domain in domains))
+    total = len(unique_domains)
+    for completed, domain in enumerate(unique_domains, start=1):
         sitemap_path = Path(sitemap_dir) / f'{domain}.yaml'
         status = site_run_status(
             domain,
@@ -119,4 +142,6 @@ def build_sitemap_inventory(
             status=status,
             has_run=status != 'not run',
         ))
+        if progress is not None:
+            progress(completed, total, domain)
     return SitemapInventory(entries)

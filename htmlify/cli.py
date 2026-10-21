@@ -428,13 +428,31 @@ def sitemaps(
 
     _print_sitemap_failures(sitemap_failures)
 
+    inventory_started = time.monotonic()
+    inventory_progress = None
+    if not build:
+        typer.echo(f'Reading sitemap inventory for {len(domains):,} sites...')
+
+        def inventory_progress(completed, total, current_domain):
+            if completed == total or completed % 25 == 0:
+                typer.echo(
+                    f'  Read {completed:,}/{total:,} sites '
+                    f'(latest: {current_domain})'
+                )
+
     inventory = build_sitemap_inventory(
         domains,
         SiteMapTask.output_dir,
         config.SITES_DIR,
         config.PROCESSING_DATA_DIR,
         STATIC_ARCHIVE_VERSION,
+        progress=inventory_progress,
     )
+    if not build:
+        typer.echo(
+            f'Inventory scan time: '
+            f'{format_duration(time.monotonic() - inventory_started)}'
+        )
     inventory.failures = sitemap_failures
     _print_sitemap_inventory(inventory)
     if report:

@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import yaml
 
@@ -110,6 +111,51 @@ class TestSitemapInventory(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, 'not a URL list'):
                 sitemap_url_count(path)
+
+    def test_counts_standard_sitemap_without_loading_it_as_yaml(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'large.yaml'
+            path.write_text(
+                '# htmlify-sitemap-version: 3\n'
+                "- ''\n"
+                '- node/1\n'
+                '- taxonomy/term/2\n',
+                encoding='utf-8',
+            )
+
+            with patch(
+                'htmlify.inventory.yaml.safe_load',
+                side_effect=AssertionError('full YAML parser was used'),
+            ):
+                self.assertEqual(sitemap_url_count(path), 3)
+
+    def test_reports_inventory_scan_progress(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sitemap_dir = root / 'sitemaps'
+            sitemap_dir.mkdir()
+            domains = ['b.example.org', 'a.example.org']
+            for domain in domains:
+                (sitemap_dir / f'{domain}.yaml').write_text(
+                    '- node/1\n', encoding='utf-8',
+                )
+            progress = []
+
+            build_sitemap_inventory(
+                domains,
+                sitemap_dir,
+                root / 'sites',
+                root / 'processing',
+                '14',
+                progress=lambda completed, total, domain: progress.append(
+                    (completed, total, domain)
+                ),
+            )
+
+            self.assertEqual(progress, [
+                (1, 2, 'a.example.org'),
+                (2, 2, 'b.example.org'),
+            ])
 
 
 if __name__ == '__main__':
