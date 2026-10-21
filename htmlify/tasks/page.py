@@ -69,7 +69,7 @@ from htmlify.taxonomy import (
 )
 
 
-SPECIES_PAGE_VERSION = '3'
+SPECIES_PAGE_VERSION = '4'
 SKIPPED_PAGE_VERSION = '3'
 FACET_PAGE_VERSION = '11'
 STATIC_ASSET_VERSION = '7'
@@ -168,7 +168,11 @@ class PageTask(BaseTask):
 
         # Do this before expanding widgets or downloading assets. Template-only
         # taxonomy tabs are common and should not cost a full page conversion.
-        if not is_facet_page and not self._page_has_content(soup):
+        if (
+            not is_facet_page
+            and not species_vid
+            and not self._page_has_content(soup)
+        ):
             self._mark_skipped('main content region is empty')
             return
 
@@ -461,6 +465,55 @@ class PageTask(BaseTask):
                 content.append(copy.deepcopy(child))
         return content
 
+    @staticmethod
+    def _remove_obsolete_species_blocks(soup):
+        """Remove retired remote-data blocks that cannot work statically."""
+        for selector in (
+            '.block-ncbi',
+            '.block-iucn',
+            '.block-refindit',
+            '.block-bhl',
+        ):
+            for block in soup.select(selector):
+                block.decompose()
+
+    @staticmethod
+    def _species_panel_has_content(section):
+        """Return whether a tab contains useful, archivable content."""
+        content = copy.deepcopy(section)
+        for selector in (
+            'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+            'script', 'style', 'form',
+            '.contextual-links-wrapper',
+            '.view-empty', '.views-empty',
+        ):
+            for element in content.select(selector):
+                element.decompose()
+
+        text = content.get_text(' ', strip=True).replace('\xa0', '').strip()
+        if text:
+            return True
+        return bool(content.find([
+            'audio', 'embed', 'iframe', 'img', 'object', 'table', 'video',
+        ]))
+
+    @staticmethod
+    def _remove_original_species_content(soup, tabs_container):
+        """Remove source content after it has been copied into tab panels."""
+        root = (
+            soup.select_one('#region-content .region-content-inner')
+            or soup.select_one('#region-content')
+        )
+        if not root:
+            return
+        found_tabs = False
+        for child in list(root.contents):
+            if child is tabs_container:
+                found_tabs = True
+                continue
+            if found_tabs:
+                child.extract()
+
     def species_page(self, soup, tid, vid):
         """Combine the enabled Drupal species tabs into one static page."""
         base_path = f'/taxonomy/term/{tid}'
@@ -478,6 +531,7 @@ class PageTask(BaseTask):
         ):
             for block in soup.select(selector):
                 block.decompose()
+        self._remove_obsolete_species_blocks(soup)
 
         tabs_container = soup.select_one('#region-content div.tabs')
         tabs_list = tabs_container.select_one('ul.tabs') if tabs_container else None
@@ -528,6 +582,8 @@ class PageTask(BaseTask):
             # wrapper is copied without the script needed to identify it.
             if tab_soup and self._is_slickgrid(tab_soup):
                 tab_soup = self._load_slickgrid(tab_soup)
+            if tab_soup:
+                self._remove_obsolete_species_blocks(tab_soup)
 
             section = soup.new_tag('section')
             section['class'] = ['htmlify-species-panel']
@@ -540,41 +596,43 @@ class PageTask(BaseTask):
             tab_content = (
                 self._species_tab_content(tab_soup) if tab_soup else []
             )
-            if tab_content:
-                section.extend(tab_content)
-            else:
-                empty = soup.new_tag('p')
-                empty['class'] = ['htmlify-species-empty']
-                empty.string = 'No archived content is available for this section.'
-                section.append(empty)
-            panels.append(section)
+            section.extend(tab_content)
+            if self._species_panel_has_content(section):
+                panels.append((tab, section))
 
-        tabs_container.clear()
-        tabs_container['class'] = ['tabs', 'htmlify-species-tabs']
-        tabs_container['aria-label'] = 'Species page sections'
-        new_list = soup.new_tag('ul')
-        new_list['role'] = 'tablist'
-        for position, tab in enumerate(tabs):
-            item = soup.new_tag('li')
-            link = soup.new_tag(
-                'a',
-                href=f"#species-tab-{tab['slug']}",
-            )
-            link['data-species-tab'] = tab['slug']
-            link['role'] = 'tab'
-            link['aria-controls'] = f"species-tab-{tab['slug']}"
-            link['aria-selected'] = 'true' if position == 0 else 'false'
-            if position == 0:
-                link['class'] = ['active']
-            link.string = tab['label']
-            item.append(link)
-            new_list.append(item)
-        tabs_container.append(new_list)
+        # The base page's original content was used to build the first panel.
+        # Leaving it in place makes it appear below every selected tab.
+        self._remove_original_species_content(soup, tabs_container)
 
-        insertion_point = tabs_container
-        for panel in panels:
-            insertion_point.insert_after(panel)
-            insertion_point = panel
+        if panels:
+            tabs_container.clear()
+            tabs_container['class'] = ['tabs', 'htmlify-species-tabs']
+            tabs_container['aria-label'] = 'Species page sections'
+            new_list = soup.new_tag('ul')
+            new_list['role'] = 'tablist'
+            for position, (tab, panel) in enumerate(panels):
+                item = soup.new_tag('li')
+                link = soup.new_tag(
+                    'a',
+                    href=f"#species-tab-{tab['slug']}",
+                )
+                link['data-species-tab'] = tab['slug']
+                link['role'] = 'tab'
+                link['aria-controls'] = f"species-tab-{tab['slug']}"
+                link['aria-selected'] = 'true' if position == 0 else 'false'
+                if position == 0:
+                    link['class'] = ['active']
+                link.string = tab['label']
+                item.append(link)
+                new_list.append(item)
+            tabs_container.append(new_list)
+
+            insertion_point = tabs_container
+            for _, panel in panels:
+                insertion_point.insert_after(panel)
+                insertion_point = panel
+        else:
+            tabs_container.decompose()
 
         content_region = soup.select_one('#region-content')
         if content_region:

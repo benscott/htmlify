@@ -363,6 +363,7 @@ class TestSpeciesPage(unittest.TestCase):
                   <div class="tabs"><ul class="tabs primary">
                     <li><a href="/taxonomy/term/8">Descriptions</a></li>
                     <li><a href="/taxonomy/term/8/media">Media</a></li>
+                    <li><a href="/taxonomy/term/8/maps">Maps</a></li>
                   </ul></div>
                   <article>A description</article>
                 </div>
@@ -380,9 +381,21 @@ class TestSpeciesPage(unittest.TestCase):
             ''',
             'html.parser',
         )
+        maps = BeautifulSoup(
+            '''
+            <div id="region-content"><div class="region-content-inner">
+              <div class="tabs"><ul class="tabs"></ul></div>
+              <section id="block-views-species-map-block">
+                <h2>Distribution</h2>
+                <div class="gm3-container"><div id="gm3-map"></div></div>
+              </section>
+            </div></div>
+            ''',
+            'html.parser',
+        )
 
         with (
-            patch('htmlify.tasks.page.get_soup', return_value=media),
+            patch('htmlify.tasks.page.get_soup', side_effect=[media, maps]),
             patch('htmlify.tasks.page.write_taxonomy_index') as write_index,
         ):
             task.species_page(soup, 8, 4)
@@ -393,7 +406,11 @@ class TestSpeciesPage(unittest.TestCase):
             ['descriptions', 'media'],
         )
         self.assertIn('A description', panels[0].get_text())
+        self.assertEqual(soup.get_text().count('A description'), 1)
         self.assertIsNotNone(panels[1].find('img', src='/media.jpg'))
+        self.assertIsNone(
+            soup.select_one('[data-species-tab="maps"]')
+        )
         self.assertEqual(
             soup.select_one('.htmlify-taxonomy-tree')['data-index-url'],
             '/assets/taxonomy/4.json',
@@ -412,3 +429,42 @@ class TestSpeciesPage(unittest.TestCase):
             soup.find('script', src='/assets/species-page.js?v=7')
         )
         write_index.assert_called_once()
+
+    def test_removes_retired_species_api_blocks(self):
+        soup = BeautifulSoup(
+            '''
+            <section class="block-ncbi"><h2>NCBI</h2></section>
+            <section class="block-iucn"><h2>IUCN</h2></section>
+            <section class="block-refindit"><h2>ReFindIt</h2></section>
+            <section class="block-bhl"><h2>BHL</h2></section>
+            <section class="local-description">A retained description</section>
+            ''',
+            'html.parser',
+        )
+
+        PageTask._remove_obsolete_species_blocks(soup)
+
+        self.assertIsNone(soup.select_one('.block-ncbi'))
+        self.assertIsNone(soup.select_one('.block-iucn'))
+        self.assertIsNone(soup.select_one('.block-refindit'))
+        self.assertIsNone(soup.select_one('.block-bhl'))
+        self.assertIn('A retained description', soup.get_text())
+
+    def test_empty_species_tab_scaffolding_is_not_content(self):
+        empty = BeautifulSoup(
+            '''
+            <section class="htmlify-species-panel">
+              <h2>Maps</h2><section><h2>Distribution</h2>
+              <div class="gm3-container"><div id="gm3-map"></div></div>
+              </section>
+            </section>
+            ''',
+            'html.parser',
+        ).section
+        populated = BeautifulSoup(
+            '<section><h2>Media</h2><img src="/specimen.jpg"></section>',
+            'html.parser',
+        ).section
+
+        self.assertFalse(PageTask._species_panel_has_content(empty))
+        self.assertTrue(PageTask._species_panel_has_content(populated))
