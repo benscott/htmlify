@@ -66,6 +66,110 @@ class TestPageContent(unittest.TestCase):
 
         self.assertEqual(soup.a['href'], '/file-colorboxed/267')
 
+    def test_biblio_author_and_keyword_links_open_static_facets(self):
+        task = PageTask(
+            url='https://abrusinthailand.myspecies.info/node/13',
+            output_dir='/tmp/site',
+        )
+        soup = BeautifulSoup(
+            '''
+            <a href="/biblio/author/1">V. Bobbarala</a>
+            <a href="https://abrusinthailand.myspecies.info/biblio/keyword/2">
+              Abrus precatorius
+            </a>
+            ''',
+            'html.parser',
+        )
+
+        task.process_links(soup)
+
+        self.assertEqual(
+            [link['href'] for link in soup.find_all('a')],
+            [
+                '/biblio?facet=im_biblio_contributor%3A1',
+                '/biblio?facet=im_biblio_keyword%3A2',
+            ],
+        )
+
+    def test_page_with_legacy_biblio_filter_links_is_incomplete(self):
+        with tempfile.TemporaryDirectory() as directory:
+            task = PageTask(
+                url='https://abrusinthailand.myspecies.info/node/13',
+                output_dir=Path(directory),
+            )
+            output = Path(task.output().path)
+            output.parent.mkdir(parents=True)
+            output.write_text(
+                '<html data-htmlify-page-version="1" '
+                'data-htmlify-domain="abrusinthailand.myspecies.info">'
+                '<body><a href="/biblio/author/1">Author</a></body></html>',
+                encoding='utf-8',
+            )
+
+            with (
+                patch(
+                    'htmlify.tasks.page.configured_facet_definitions',
+                    return_value=[],
+                ),
+                patch(
+                    'htmlify.tasks.page.is_configured_facet_page',
+                    return_value=False,
+                ),
+            ):
+                self.assertFalse(task.complete())
+
+    def test_inactive_user_references_become_text(self):
+        task = PageTask(
+            url=(
+                'https://abrusinthailand.myspecies.info/'
+                'specimen_observation'
+            ),
+            output_dir='/tmp/site',
+        )
+        soup = BeautifulSoup(
+            '''
+            <html><body>
+              <a href="/user/10">Public collector</a>
+              <a href="/user/12">Reference-only collector</a>
+            </body></html>
+            ''',
+            'html.parser',
+        )
+
+        with patch(
+            'htmlify.tasks.page.db_manager.fetch',
+            return_value=[(10,)],
+        ) as fetch:
+            task.process_links(soup)
+
+        self.assertEqual(
+            [(link.get_text(strip=True), link['href']) for link in soup.find_all('a')],
+            [('Public collector', '/user/10')],
+        )
+        self.assertIn('Reference-only collector', soup.get_text())
+        self.assertEqual(
+            soup.html['data-htmlify-user-links-version'],
+            '1',
+        )
+        self.assertIn('AND uid IN (10, 12)', fetch.call_args.args[1])
+
+    def test_skipped_user_profile_is_revisited(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original_processing_dir = config.PROCESSING_DATA_DIR
+            config.PROCESSING_DATA_DIR = root / 'processing'
+            try:
+                task = PageTask(
+                    url='https://abrusinthailand.myspecies.info/user/10',
+                    output_dir=root / 'site',
+                )
+                task._mark_skipped('main content region is empty')
+
+                self.assertEqual(task._user_profile_id(), 10)
+                self.assertFalse(task.complete())
+            finally:
+                config.PROCESSING_DATA_DIR = original_processing_dir
+
     def test_protocol_relative_ddev_asset_uses_canonical_request_url(self):
         task = PageTask(
             url='https://weevil.myspecies.info/taxonomy/term/8',

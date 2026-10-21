@@ -74,6 +74,7 @@ SKIPPED_PAGE_VERSION = '3'
 FACET_PAGE_VERSION = '11'
 STATIC_ASSET_VERSION = '7'
 PAGE_ARCHIVE_VERSION = '1'
+USER_LINK_VERSION = '1'
 
 class PageTask(BaseTask):
 
@@ -87,6 +88,11 @@ class PageTask(BaseTask):
         'autocomplete.js',
         'modal_forms_popup.js',
     ]
+
+    biblio_route_facets = {
+        'author': 'im_biblio_contributor',
+        'keyword': 'im_biblio_keyword',
+    }
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)  
@@ -171,6 +177,7 @@ class PageTask(BaseTask):
         if (
             not is_facet_page
             and not species_vid
+            and not self._user_profile_id()
             and not self._page_has_content(soup)
         ):
             self._mark_skipped('main content region is empty')
@@ -333,7 +340,8 @@ class PageTask(BaseTask):
                 errors='ignore',
             ).splitlines()[0]
             if first_line == f'htmlify-skip-version: {SKIPPED_PAGE_VERSION}':
-                return True
+                # Older runs treated title-only public profiles as empty.
+                return not bool(self._user_profile_id())
 
             if self._classification_vid():
                 return False
@@ -391,6 +399,17 @@ class PageTask(BaseTask):
                 return False
         if 'htmlify-biblio-browser' in html:
             return False
+        if re.search(
+            r'href=["\']/biblio/(?:author|keyword)/\d+/?["\']',
+            html,
+        ):
+            return False
+        if (
+            re.search(r'href=["\']/user/\d+/?["\']', html)
+            and f'data-htmlify-user-links-version="{USER_LINK_VERSION}"'
+            not in html
+        ):
+            return False
         if 'block-facetapi' in html and not self._is_search_page():
             return False
         if 'htmlify-facet-browser' in html:
@@ -408,6 +427,10 @@ class PageTask(BaseTask):
 
     def _classification_vid(self):
         match = re.fullmatch(r'/classification/(\d+)', self._url.path or '')
+        return int(match.group(1)) if match else None
+
+    def _user_profile_id(self):
+        match = re.fullmatch(r'/user/(\d+)', self._url.path or '')
         return int(match.group(1)) if match else None
 
     def _write_redirect_page(self, destination):
@@ -893,10 +916,43 @@ class PageTask(BaseTask):
 
     def process_links(self, soup):
 
+        linked_user_ids = {
+            user_id
+            for link in soup.find_all('a', href=True)
+            if (
+                user_id := self._linked_user_id(link.get('href'))
+            ) is not None
+        }
+        public_user_ids = None
+        if linked_user_ids:
+            identifiers = ', '.join(str(uid) for uid in sorted(linked_user_ids))
+            public_user_ids = {
+                int(uid)
+                for uid, in db_manager.fetch(
+                    self.domain,
+                    'SELECT uid FROM users '
+                    'WHERE status = 1 '
+                    f'AND uid IN ({identifiers})',
+                )
+            }
+
+            if soup.html:
+                soup.html['data-htmlify-user-links-version'] = (
+                    USER_LINK_VERSION
+                )
+
         # Loop through the links, ensuring they match the new static site structure
         for a in soup.find_all('a', href=True):  
             href = a.get('href')
             if href.startswith('#'):
+                continue
+            linked_user_id = self._linked_user_id(href)
+            if (
+                linked_user_id is not None
+                and public_user_ids is not None
+                and linked_user_id not in public_user_ids
+            ):
+                a.unwrap()
                 continue
             if is_decommisionned_link(href):
                 a.decompose()
@@ -907,12 +963,33 @@ class PageTask(BaseTask):
             if not url.is_site_internal_link():
                 continue
 
+            if biblio_facet_href := self._biblio_facet_href(href):
+                a['href'] = biblio_facet_href
+                continue
+
             if url.has_multiple_facets():
                 logger.debug(f'Removing facet url {href}')
                 a.decompose()
                 continue
 
             a['href'] = url.to_path()
+
+    def _linked_user_id(self, href):
+        if not is_internal_url(href, self.domain):
+            return None
+        match = re.fullmatch(r'/user/(\d+)/?', urlparse(href).path)
+        return int(match.group(1)) if match else None
+
+    @classmethod
+    def _biblio_facet_href(cls, href):
+        """Translate Drupal Biblio routes to the static browser state."""
+        path = urlparse(href).path.rstrip('/')
+        match = re.fullmatch(r'/biblio/(author|keyword)/(\d+)', path)
+        if not match:
+            return None
+        route, value = match.groups()
+        facet = f'{cls.biblio_route_facets[route]}:{value}'
+        return f'/biblio?{urlencode({"facet": facet})}'
 
     def replace_login(self, soup):      
         if login_div := soup.find('div', id='zone-slide-top-wrapper'):
