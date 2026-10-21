@@ -7,6 +7,7 @@ import phpserialize
 from bs4 import BeautifulSoup
 
 from htmlify.facets import (
+    _file_thumbnail_url,
     build_facet_index,
     configured_facet_definitions,
     extract_facet_definitions,
@@ -252,6 +253,19 @@ class TestFacetDetection(unittest.TestCase):
 
 
 class TestFacetIndex(unittest.TestCase):
+
+    def test_remote_media_uses_drupal_remote_image_style_path(self):
+        self.assertEqual(
+            _file_thumbnail_url(
+                'abrusinthailand.myspecies.info',
+                'http://collections.example/media.php?env=botany&irn=42',
+                'image',
+                'media.php?env=botany&irn=42',
+            ),
+            '/sites/abrusinthailand.myspecies.info/files/styles/'
+            'square_thumbnail/http/collections.example/'
+            'media.php%3Fenv%3Dbotany%26irn%3D42',
+        )
 
     def test_media_database_records_include_archived_thumbnail_urls(self):
         facets = [

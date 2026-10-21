@@ -43,6 +43,10 @@ from htmlify.tasks.sitemap import SiteMapTask
 from htmlify.url import URL
 from htmlify.db import db_manager
 from htmlify.progress import initialise_site_progress
+from htmlify.thumbnails import (
+    create_missing_gallery_thumbnails,
+    gallery_thumbnails_complete,
+)
 
 
 STATIC_ARCHIVE_VERSION = '14'
@@ -529,6 +533,21 @@ class SiteTask(BaseTask):
         if pending_page_tasks:
             yield pending_page_tasks
 
+        thumbnail_result = create_missing_gallery_thumbnails(
+            self.output().path,
+        )
+        if thumbnail_result['created']:
+            logger.info(
+                f"Created {thumbnail_result['created']} missing gallery "
+                f'thumbnails for {self.domain}'
+            )
+        if thumbnail_result['missing_sources']:
+            logger.warning(
+                f"Could not create {len(thumbnail_result['missing_sources'])} "
+                f'gallery thumbnails for {self.domain} because neither the '
+                'original nor large derivative has been copied'
+            )
+
         self.create_file_colorbox_aliases()
 
         # Partial and whole-site runs have distinct completion targets, so a
@@ -586,6 +605,9 @@ class SiteTask(BaseTask):
             return False
 
         if not self.generated_assets_are_web_readable():
+            return False
+
+        if not gallery_thumbnails_complete(self.output().path):
             return False
 
         if self.is_filtered_run:

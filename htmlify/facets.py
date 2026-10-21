@@ -835,12 +835,25 @@ def _file_thumbnail_url(domain, uri, file_type, filename):
         or Path(str(filename)).suffix.lower() in image_extensions
     )
     uri = str(uri or '')
-    if not is_image or not uri.startswith('public://'):
+    if not is_image:
         return None
-    relative_path = uri[len('public://'):].lstrip('/')
+    if uri.startswith('public://'):
+        relative_path = (
+            'public/'
+            + quote(uri[len('public://'):].lstrip('/'), safe='/')
+        )
+    elif uri.startswith(('http://', 'https://')):
+        # Drupal's image-style stream wrapper stores remote derivatives below
+        # ``styles/<style>/http(s)/<host>/...`` and percent-encodes any query
+        # string as part of the filename.
+        relative_path = quote(
+            uri.replace('://', '/', 1).lstrip('/'),
+            safe='/',
+        )
+    else:
+        return None
     return (
-        f'/sites/{domain}/files/styles/square_thumbnail/public/'
-        f'{quote(relative_path, safe="/")}'
+        f'/sites/{domain}/files/styles/square_thumbnail/{relative_path}'
     )
 
 
