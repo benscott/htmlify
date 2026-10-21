@@ -12,6 +12,45 @@ from htmlify.tasks.page import PageTask
 
 class TestPageContent(unittest.TestCase):
 
+    def test_slickgrid_parser_accepts_legacy_javascript_variants(self):
+        task = PageTask(
+            url='https://abrusinthailand.myspecies.info/taxonomy/term/74',
+            output_dir='/tmp/site',
+        )
+        soup = BeautifulSoup(
+            '''
+            <div class="slickgrid-wrapper"><div id="slick-grid"></div></div>
+            <script>
+              var columns = [
+                {"id": "title", "name": "Title"},
+                {"id": "taxon", "name": "Taxon"}
+              ];
+              slickgrid = new Slickgrid(
+                '#slick-grid', 'taxon-records', 'page-1'
+              );
+            </script>
+            ''',
+            'html.parser',
+        )
+
+        self.assertEqual(
+            task._get_slickgrid_id(soup),
+            ('taxon-records', ['Title', 'Taxon', 'ID']),
+        )
+
+    def test_unrecognised_slickgrid_does_not_fail_the_page(self):
+        task = PageTask(
+            url='https://abrusinthailand.myspecies.info/taxonomy/term/74',
+            output_dir='/tmp/site',
+        )
+        soup = BeautifulSoup(
+            '<div class="slickgrid-wrapper"><div id="slickgrid"></div></div>',
+            'html.parser',
+        )
+
+        self.assertIs(task._load_slickgrid(soup), soup)
+        self.assertIsNotNone(soup.select_one('.slickgrid-wrapper'))
+
     def test_colorbox_file_link_uses_canonical_archived_file_page(self):
         task = PageTask(
             url='https://aba.myspecies.info/gallery',
@@ -237,6 +276,58 @@ class TestFacetSearch(unittest.TestCase):
 
 
 class TestSpeciesPage(unittest.TestCase):
+
+    def test_expands_slickgrid_before_copying_a_species_tab(self):
+        task = PageTask(
+            url='https://abrusinthailand.myspecies.info/taxonomy/term/74',
+            output_dir=Path('/tmp/abrus-species-test'),
+        )
+        soup = BeautifulSoup(
+            '''
+            <html><body><div id="region-content"><div class="region-content-inner">
+              <div class="tabs"><ul class="tabs">
+                <li><a href="/taxonomy/term/74">Description</a></li>
+                <li><a href="/taxonomy/term/74/specimens">Specimens</a></li>
+              </ul></div>
+              <article>A description</article>
+            </div></div></body></html>
+            ''',
+            'html.parser',
+        )
+        specimens = BeautifulSoup(
+            '''
+            <html><head><script>
+              var columns = [{"id": "title", "name": "Title"}];
+              slickgrid = new Slickgrid('#slickgrid', 'specimen_records', 'page_1');
+            </script></head><body>
+              <div id="region-content"><div class="region-content-inner">
+                <div class="tabs"><ul class="tabs"></ul></div>
+                <div class="slickgrid-wrapper"><div id="slickgrid"></div></div>
+              </div></div>
+            </body></html>
+            ''',
+            'html.parser',
+        )
+
+        with (
+            patch('htmlify.tasks.page.get_soup', return_value=specimens),
+            patch(
+                'htmlify.tasks.page.request_json',
+                return_value={'data': [{'Title': 'Specimen one', 'ID': '42'}]},
+            ) as request_grid,
+        ):
+            task.species_page(soup, 74, 3)
+
+        specimen_panel = soup.select_one(
+            '.htmlify-species-panel[data-species-tab="specimens"]'
+        )
+        self.assertIsNotNone(specimen_panel.find('table'))
+        self.assertIn('Specimen one', specimen_panel.get_text())
+        self.assertIsNone(specimen_panel.select_one('.slickgrid-wrapper'))
+        request_grid.assert_called_once_with(
+            'https://abrusinthailand.myspecies.info/'
+            'slickgrid/get/data/specimen_records/0/100'
+        )
 
     def test_combines_rendered_tabs_and_replaces_tinytax(self):
         task = PageTask(

@@ -69,7 +69,7 @@ from htmlify.taxonomy import (
 )
 
 
-SPECIES_PAGE_VERSION = '1'
+SPECIES_PAGE_VERSION = '2'
 SKIPPED_PAGE_VERSION = '3'
 FACET_PAGE_VERSION = '9'
 STATIC_ASSET_VERSION = '5'
@@ -502,6 +502,13 @@ class PageTask(BaseTask):
                         f'Could not archive species tab {tab_url}: {error}'
                     )
                     tab_soup = None
+
+            # Drupal normally places the SlickGrid initializer outside the
+            # tab's main content region. Expand the grid before copying that
+            # region into the combined static species page, otherwise the
+            # wrapper is copied without the script needed to identify it.
+            if tab_soup and self._is_slickgrid(tab_soup):
+                tab_soup = self._load_slickgrid(tab_soup)
 
             section = soup.new_tag('section')
             section['class'] = ['htmlify-species-panel']
@@ -1051,30 +1058,56 @@ class PageTask(BaseTask):
                 tabs.decompose() 
 
     def _get_slickgrid_id(self, soup):
-        pattern = r'new Slickgrid\("\#(?P<div_id>\w+)", "(?P<slick_id>\w+)", "(?P<page>\w+)"\);'
-
+        pattern = re.compile(
+            r'''new\s+Slickgrid\s*\(\s*
+                (["'])\#[^"']+\1\s*,\s*
+                (["'])(?P<slick_id>[^"']+)\2\s*,\s*
+                (["'])[^"']+\4\s*\)
+            ''',
+            re.VERBOSE,
+        )
         for script in soup.find_all('script'):
-            for content in script.contents:
-                match = re.search(pattern, content)
-                if match:
-                    # FIXME: Get columns
-                    column_pattern = r'var columns\s*=\s*(\[\{.*?\}\])'
-                    
-                    column_match = re.search(column_pattern, content)
-                    if column_match:
+            content = script.string or script.get_text()
+            if not content:
+                continue
+            match = pattern.search(content)
+            if not match:
+                continue
 
-                        column_dict = json.loads(column_match.group(1))
-                        columns = [col.get('name') for col in column_dict] + ['ID']
-                    else:
-                        columns = None
+            columns = None
+            column_match = re.search(r'\bvar\s+columns\s*=\s*', content)
+            if column_match:
+                try:
+                    column_dict, _ = json.JSONDecoder().raw_decode(
+                        content[column_match.end():]
+                    )
+                    if isinstance(column_dict, list):
+                        columns = [
+                            column.get('name')
+                            for column in column_dict
+                            if isinstance(column, dict) and column.get('name')
+                        ] + ['ID']
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning(
+                        f'Could not parse SlickGrid columns on {self.url}'
+                    )
 
-                    return match.group('slick_id'), columns
+            return match.group('slick_id'), columns
+
+        return None, None
 
     def _load_slickgrid(self, soup):
 
         logger.debug('Slickgrid detected - replacing grid')
 
         slickgrid_id, columns = self._get_slickgrid_id(soup)
+
+        if not slickgrid_id:
+            logger.warning(
+                f'Could not find SlickGrid configuration on {self.url}; '
+                'leaving the original page content in place'
+            )
+            return soup
 
         if slickgrid_id:
 
