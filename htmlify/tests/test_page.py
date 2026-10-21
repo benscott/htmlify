@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 import requests
 
 from htmlify import config
-from htmlify.tasks.page import PageTask
+from htmlify.tasks.page import PageTask, STATIC_ASSET_VERSION
 
 
 class TestPageContent(unittest.TestCase):
@@ -118,7 +118,7 @@ class TestPageContent(unittest.TestCase):
             ):
                 self.assertFalse(task.complete())
 
-    def test_inactive_user_references_become_text(self):
+    def test_existing_user_references_remain_links(self):
         task = PageTask(
             url=(
                 'https://abrusinthailand.myspecies.info/'
@@ -131,6 +131,7 @@ class TestPageContent(unittest.TestCase):
             <html><body>
               <a href="/user/10">Public collector</a>
               <a href="/user/12">Reference-only collector</a>
+              <a href="/user/13">Missing collector</a>
             </body></html>
             ''',
             'html.parser',
@@ -138,20 +139,55 @@ class TestPageContent(unittest.TestCase):
 
         with patch(
             'htmlify.tasks.page.db_manager.fetch',
-            return_value=[(10,)],
+            return_value=[(10,), (12,)],
         ) as fetch:
             task.process_links(soup)
 
         self.assertEqual(
             [(link.get_text(strip=True), link['href']) for link in soup.find_all('a')],
-            [('Public collector', '/user/10')],
+            [
+                ('Public collector', '/user/10'),
+                ('Reference-only collector', '/user/12'),
+            ],
         )
-        self.assertIn('Reference-only collector', soup.get_text())
+        self.assertIn('Missing collector', soup.get_text())
         self.assertEqual(
             soup.html['data-htmlify-user-links-version'],
-            '1',
+            '2',
         )
-        self.assertIn('AND uid IN (10, 12)', fetch.call_args.args[1])
+        self.assertIn('uid > 0 AND uid IN (10, 12, 13)', fetch.call_args.args[1])
+
+    def test_blocked_database_user_gets_a_static_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original_processing_dir = config.PROCESSING_DATA_DIR
+            config.PROCESSING_DATA_DIR = root / 'processing'
+            try:
+                task = PageTask(
+                    url='https://abrusinthailand.myspecies.info/user/33',
+                    output_dir=root / 'site',
+                )
+                with (
+                    patch(
+                        'htmlify.tasks.page.db_manager.fetch_one',
+                        return_value=(33, 'Historic collector', 0),
+                    ),
+                    patch(
+                        'htmlify.tasks.page.is_configured_facet_page',
+                        return_value=False,
+                    ),
+                    patch('htmlify.tasks.page.get_soup') as get_soup,
+                ):
+                    task.run()
+
+                get_soup.assert_not_called()
+                archived = Path(task.output().path).read_text(encoding='utf-8')
+                self.assertIn('Historic collector', archived)
+                self.assertIn('data-htmlify-user-profile-version="1"', archived)
+                self.assertIn('data-htmlify-user-id="33"', archived)
+                self.assertIn('href="/"', archived)
+            finally:
+                config.PROCESSING_DATA_DIR = original_processing_dir
 
     def test_skipped_user_profile_is_revisited(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -169,6 +205,37 @@ class TestPageContent(unittest.TestCase):
                 self.assertFalse(task.complete())
             finally:
                 config.PROCESSING_DATA_DIR = original_processing_dir
+
+    def test_page_with_old_user_link_processing_is_revisited(self):
+        with tempfile.TemporaryDirectory() as directory:
+            task = PageTask(
+                url=(
+                    'https://abrusinthailand.myspecies.info/'
+                    'specimen_observation'
+                ),
+                output_dir=Path(directory),
+            )
+            output = Path(task.output().path)
+            output.parent.mkdir(parents=True)
+            output.write_text(
+                '<html data-htmlify-page-version="1" '
+                'data-htmlify-domain="abrusinthailand.myspecies.info" '
+                'data-htmlify-user-links-version="1">'
+                '<body>Reference-only collector</body></html>',
+                encoding='utf-8',
+            )
+
+            with (
+                patch(
+                    'htmlify.tasks.page.configured_facet_definitions',
+                    return_value=[],
+                ),
+                patch(
+                    'htmlify.tasks.page.is_configured_facet_page',
+                    return_value=False,
+                ),
+            ):
+                self.assertFalse(task.complete())
 
     def test_protocol_relative_ddev_asset_uses_canonical_request_url(self):
         task = PageTask(
@@ -339,7 +406,10 @@ class TestFacetSearch(unittest.TestCase):
         self.assertIsNotNone(controls.find_parent(id='region-sidebar'))
         self.assertIsNotNone(browser.find_parent(id='region-content'))
         self.assertTrue(
-            soup.find('script', src='/assets/facet-search.js?v=7')['defer']
+            soup.find(
+                'script',
+                src=f'/assets/facet-search.js?v={STATIC_ASSET_VERSION}',
+            )['defer']
         )
         self.assertIsNone(soup.select_one('.block-facetapi'))
         self.assertIsNone(soup.select_one('.block-scratchpads-biblio-search'))
@@ -532,7 +602,10 @@ class TestSpeciesPage(unittest.TestCase):
             '#species-tab-descriptions',
         )
         self.assertIsNotNone(
-            soup.find('script', src='/assets/species-page.js?v=7')
+            soup.find(
+                'script',
+                src=f'/assets/species-page.js?v={STATIC_ASSET_VERSION}',
+            )
         )
         write_index.assert_called_once()
 

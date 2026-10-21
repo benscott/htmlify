@@ -4,6 +4,7 @@ import itertools
 import phpserialize
 import yaml
 import pandas as pd
+import re
 
 
 from htmlify.config import PROCESSING_DATA_DIR, DB_USERNAME, DB_PASSWORD, logger
@@ -13,7 +14,7 @@ from htmlify.db import db_manager
 from htmlify.taxonomy import get_biological_vids
 
 
-SITEMAP_VERSION = '4'
+SITEMAP_VERSION = '5'
 
 class SiteMapTask(BaseTask):
     
@@ -188,12 +189,69 @@ class SiteMapTask(BaseTask):
         return [f'forum/{tid}' for tid, in terms]
     
     def get_user_urls(self):
-        urls = []
-        result = self._query(f"SELECT uid, status FROM users WHERE status = 1")
-        for uid, _ in result:
-            urls.append(f'user/{uid}')
+        """Return active users and accounts referenced by public content.
 
-        return urls    
+        Drupal refuses anonymous access to a blocked account's profile, but
+        historic nodes can still link to that account as an author, commenter,
+        collector, or another user-reference field. Those referenced accounts
+        need a database-backed static profile rather than a broken link.
+        """
+        user_ids = {
+            int(uid)
+            for uid, in self._query("""
+                SELECT uid
+                FROM users
+                WHERE uid > 0 AND status = 1
+            """)
+        }
+
+        user_ids.update(
+            int(uid)
+            for uid, in self._query("""
+                SELECT DISTINCT u.uid
+                FROM users u
+                INNER JOIN node n ON n.uid = u.uid
+                WHERE u.uid > 0 AND n.status = 1
+            """)
+        )
+        user_ids.update(
+            int(uid)
+            for uid, in self._query("""
+                SELECT DISTINCT u.uid
+                FROM users u
+                INNER JOIN comment c ON c.uid = u.uid
+                INNER JOIN node n ON n.nid = c.nid
+                WHERE u.uid > 0 AND c.status = 1 AND n.status = 1
+            """)
+        )
+
+        fields = self._query("""
+            SELECT field_name
+            FROM field_config
+            WHERE type = 'user_reference'
+              AND active = 1
+              AND deleted = 0
+        """)
+        for field_name, in fields:
+            # Field names become SQL identifiers, so accept only Drupal's
+            # machine-name character set before interpolating them.
+            if not re.fullmatch(r'[a-zA-Z0-9_]+', field_name):
+                logger.warning(
+                    'Ignoring unsafe user-reference field name %r on %s',
+                    field_name,
+                    self.domain,
+                )
+                continue
+            result = self._query(f"""
+                SELECT DISTINCT u.uid
+                FROM users u
+                INNER JOIN field_data_{field_name} f
+                  ON f.{field_name}_uid = u.uid
+                WHERE u.uid > 0 AND f.deleted = 0
+            """)
+            user_ids.update(int(uid) for uid, in result)
+
+        return [f'user/{uid}' for uid in sorted(user_ids)]
 
     @classmethod
     def is_archivable_path(cls, path):
