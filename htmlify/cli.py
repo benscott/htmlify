@@ -451,6 +451,12 @@ def sitemaps(
 def migrate(
     limit: Optional[int] = None, 
     offset: Optional[int] = None, 
+    workers: int = typer.Option(
+        10,
+        '--workers',
+        min=1,
+        help='Number of page tasks to run concurrently; use 1 for sequential diagnostics.',
+    ),
     domain: Optional[str] = typer.Option(
         None,
         "--domain",
@@ -644,7 +650,7 @@ def migrate(
         result = luigi.build(
             [task],
             local_scheduler=True,
-            workers=10,
+            workers=workers,
             detailed_summary=True,
         )
     finally:
