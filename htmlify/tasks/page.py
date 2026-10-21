@@ -71,8 +71,8 @@ from htmlify.taxonomy import (
 
 SPECIES_PAGE_VERSION = '2'
 SKIPPED_PAGE_VERSION = '3'
-FACET_PAGE_VERSION = '9'
-STATIC_ASSET_VERSION = '5'
+FACET_PAGE_VERSION = '10'
+STATIC_ASSET_VERSION = '6'
 PAGE_ARCHIVE_VERSION = '1'
 
 class PageTask(BaseTask):
@@ -754,16 +754,6 @@ class PageTask(BaseTask):
             url = URL(href, self.domain)
 
             if not url.is_site_internal_link():
-                continue
-
-            colorbox_file = re.fullmatch(
-                r'/file-colorboxed/(\d+)',
-                url.path or '',
-            )
-            if colorbox_file:
-                # The colorboxed route is a JavaScript popup presentation of
-                # the canonical file entity, which is already archived.
-                a['href'] = f'/file/{colorbox_file.group(1)}'
                 continue
 
             if url.has_multiple_facets():

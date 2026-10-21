@@ -838,7 +838,10 @@ def _file_thumbnail_url(domain, uri, file_type, filename):
     if not is_image or not uri.startswith('public://'):
         return None
     relative_path = uri[len('public://'):].lstrip('/')
-    return f'/sites/{domain}/files/{quote(relative_path, safe="/")}'
+    return (
+        f'/sites/{domain}/files/styles/square_thumbnail/public/'
+        f'{quote(relative_path, safe="/")}'
+    )
 
 
 def _numeric_values(values):
@@ -1012,7 +1015,7 @@ def build_facet_index(
                 del record['facets'][field]
 
     return {
-        'version': 2,
+        'version': 3,
         'page': {
             'path': '/' + str(page_path or '').strip('/'),
             'title': page_title,

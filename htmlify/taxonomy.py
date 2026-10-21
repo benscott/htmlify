@@ -84,6 +84,10 @@ def write_taxonomy_index(domain, vid, destination):
 
     destination = Path(destination)
     destination.parent.mkdir(parents=True, exist_ok=True)
+    # These indexes are public web assets. NamedTemporaryFile deliberately
+    # starts with mode 0600, so explicitly make both the directory and final
+    # file readable by the Apache worker after the atomic replacement.
+    destination.parent.chmod(0o755)
     with NamedTemporaryFile(
         mode='w',
         encoding='utf-8',
@@ -99,4 +103,5 @@ def write_taxonomy_index(domain, vid, destination):
         )
         temporary_path = Path(temporary.name)
     temporary_path.replace(destination)
+    destination.chmod(0o644)
     return payload

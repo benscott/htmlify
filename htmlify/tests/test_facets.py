@@ -317,11 +317,12 @@ class TestFacetIndex(unittest.TestCase):
             solr_url='http://solr:8983/solr/collection1',
         )
 
-        self.assertEqual(data['version'], 2)
+        self.assertEqual(data['version'], 3)
         self.assertEqual(data['page']['display'], 'thumbnails')
         self.assertEqual(
             data['records'][0]['thumbnail'],
-            '/sites/gadus.myspecies.info/files/photos/A%20kitten%20image.png',
+            '/sites/gadus.myspecies.info/files/styles/'
+            'square_thumbnail/public/photos/A%20kitten%20image.png',
         )
         self.assertEqual(data['records'][0]['facets'], {
             'is_uid': ['1'],

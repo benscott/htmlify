@@ -46,6 +46,7 @@ from htmlify.progress import initialise_site_progress
 
 
 STATIC_ARCHIVE_VERSION = '14'
+FILE_COLORBOX_VERSION = '1'
 
 
 class SiteTask(BaseTask):
@@ -199,6 +200,39 @@ class SiteTask(BaseTask):
 
         shutil.copytree(ASSETS_DIR, dest_assets_dir, dirs_exist_ok=True)
 
+        # Generated JSON indexes are public static assets. Taxonomy indexes
+        # written atomically by NamedTemporaryFile used to retain its private
+        # 0600 mode, which made Apache return 403. Repair existing archives as
+        # well as relying on new writers to use the correct mode.
+        for generated_name in ('facets', 'taxonomy'):
+            generated_dir = dest_assets_dir / generated_name
+            if not generated_dir.exists():
+                continue
+            generated_dir.chmod(0o755)
+            for generated_path in generated_dir.rglob('*'):
+                if generated_path.is_symlink():
+                    continue
+                generated_path.chmod(
+                    0o755 if generated_path.is_dir() else 0o644
+                )
+
+    def generated_assets_are_web_readable(self):
+        """Return whether Apache can traverse and read generated indexes."""
+        assets_dir = Path(self.output().path) / 'assets'
+        for generated_name in ('facets', 'taxonomy'):
+            generated_dir = assets_dir / generated_name
+            if not generated_dir.exists():
+                continue
+            if generated_dir.stat().st_mode & 0o005 != 0o005:
+                return False
+            for generated_path in generated_dir.rglob('*'):
+                if generated_path.is_symlink():
+                    continue
+                required = 0o005 if generated_path.is_dir() else 0o004
+                if generated_path.stat().st_mode & required != required:
+                    return False
+        return True
+
     def _alias_target_should_exist(self, target, sitemap_paths):
         target = self.normalise_page_path(target)
         if target not in sitemap_paths:
@@ -322,49 +356,93 @@ class SiteTask(BaseTask):
                 target_is_directory=True,
             )
 
+    @staticmethod
+    def _file_colorbox_fragment(canonical_page, file_id):
+        """Build the chrome-free media fragment expected by Colorbox."""
+        source = canonical_page / 'index.html'
+        if not source.is_file():
+            return None
+        soup = BeautifulSoup(
+            source.read_text(encoding='utf-8', errors='replace'),
+            'html.parser',
+        )
+        main = soup.select_one('#block-system-main')
+        media = None
+        if main:
+            media = (
+                main.select_one('.file-styles img')
+                or main.select_one('.file > .content img')
+                or main.select_one('video, audio, iframe')
+                or main.find('img')
+            )
+        if media:
+            media = copy.deepcopy(media)
+            media.attrs.pop('loading', None)
+            if media.name == 'img' and not media.get('alt'):
+                media['alt'] = media.get('title', '')
+            content = str(media)
+        else:
+            content = f'<a href="/file/{file_id}">View media</a>'
+        return (
+            f'<div class="htmlify-lightbox" '
+            f'data-htmlify-lightbox-version="{FILE_COLORBOX_VERSION}">'
+            f'{content}</div>\n'
+        )
+
     def create_file_colorbox_aliases(self):
-        """Keep legacy popup URLs working via canonical file pages."""
+        """Create chrome-free static responses for legacy popup URLs."""
         sites_dir = Path(self.output().path)
         canonical_dir = sites_dir / 'file'
         compatibility_dir = sites_dir / 'file-colorboxed'
 
-        if compatibility_dir.is_symlink() or not compatibility_dir.exists():
-            self._ensure_symlink(
-                compatibility_dir,
-                canonical_dir,
-                target_is_directory=True,
-            )
+        if compatibility_dir.is_symlink():
+            compatibility_dir.unlink()
+        compatibility_dir.mkdir(parents=True, exist_ok=True)
+        if not canonical_dir.is_dir():
             return
 
-        # A partially generated archive may already contain real popup page
-        # directories. Preserve those and fill only the missing IDs.
-        if compatibility_dir.is_dir() and canonical_dir.is_dir():
-            for canonical_file in canonical_dir.iterdir():
-                legacy_file = compatibility_dir / canonical_file.name
-                if not legacy_file.exists() and not legacy_file.is_symlink():
-                    self._ensure_symlink(
-                        legacy_file,
-                        canonical_file,
-                        target_is_directory=True,
-                    )
+        for canonical_file in canonical_dir.iterdir():
+            if not canonical_file.is_dir() or not canonical_file.name.isdigit():
+                continue
+            fragment = self._file_colorbox_fragment(
+                canonical_file,
+                canonical_file.name,
+            )
+            if fragment is None:
+                continue
+            legacy_file = compatibility_dir / canonical_file.name
+            if legacy_file.is_symlink():
+                legacy_file.unlink()
+            elif legacy_file.exists() and not legacy_file.is_dir():
+                legacy_file.unlink()
+            legacy_file.mkdir(parents=True, exist_ok=True)
+            (legacy_file / 'index.html').write_text(
+                fragment,
+                encoding='utf-8',
+            )
 
     def file_colorbox_aliases_complete(self):
         sites_dir = Path(self.output().path)
         canonical_dir = sites_dir / 'file'
         compatibility_dir = sites_dir / 'file-colorboxed'
-        if compatibility_dir.is_symlink():
-            return (
-                compatibility_dir.resolve(strict=False)
-                == canonical_dir.resolve(strict=False)
-            )
-        if not compatibility_dir.is_dir():
+        if compatibility_dir.is_symlink() or not compatibility_dir.is_dir():
             return False
         if not canonical_dir.is_dir():
             return True
-        return all(
-            (compatibility_dir / child.name).exists()
-            for child in canonical_dir.iterdir()
+        marker = (
+            f'data-htmlify-lightbox-version="{FILE_COLORBOX_VERSION}"'
         )
+        for child in canonical_dir.iterdir():
+            if not child.is_dir() or not child.name.isdigit():
+                continue
+            popup = compatibility_dir / child.name / 'index.html'
+            if not popup.is_file():
+                return False
+            if marker not in popup.read_text(
+                encoding='utf-8', errors='replace',
+            ):
+                return False
+        return True
 
     def site_aliases_complete(self, sitemap_paths=None):
         sites_dir = Path(self.output().path)
@@ -505,6 +583,9 @@ class SiteTask(BaseTask):
 
         sites_dir = Path(self.output().path)
         if not sites_dir.exists():
+            return False
+
+        if not self.generated_assets_are_web_readable():
             return False
 
         if self.is_filtered_run:

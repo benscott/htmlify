@@ -168,20 +168,32 @@ class TestSiteTask(unittest.TestCase):
                 self.assertTrue((site_root / 'current-page').is_symlink())
                 self.assertTrue(task.site_aliases_complete(sitemap_paths))
 
-    def test_legacy_colorbox_directory_links_missing_ids_to_file_pages(self):
+    def test_legacy_colorbox_pages_contain_only_the_primary_media(self):
         with TemporaryDirectory() as temporary_directory:
             sites_root = Path(temporary_directory)
             site_root = sites_root / 'aba.myspecies.info'
             canonical_page = site_root / 'file' / '267'
             canonical_page.mkdir(parents=True)
             (canonical_page / 'index.html').write_text(
-                'canonical file', encoding='utf-8',
+                '''
+                <html><body>
+                  <header><img src="/logo.png"></header>
+                  <div id="block-system-main">
+                    <div class="file"><div class="content">
+                      <span class="file-styles">
+                        <img src="/styles/large/specimen.jpg" title="Specimen">
+                      </span>
+                      <img src="/licence.png" alt="Licence">
+                    </div></div>
+                  </div>
+                  <footer>Site footer</footer>
+                </body></html>
+                ''',
+                encoding='utf-8',
             )
-            legacy_page = site_root / 'file-colorboxed' / '266'
-            legacy_page.mkdir(parents=True)
-            (legacy_page / 'index.html').write_text(
-                'existing popup', encoding='utf-8',
-            )
+            compatibility_dir = site_root / 'file-colorboxed'
+            compatibility_dir.parent.mkdir(parents=True, exist_ok=True)
+            compatibility_dir.symlink_to(site_root / 'file')
 
             with patch('htmlify.tasks.site.SITES_DIR', sites_root):
                 task = SiteTask(
@@ -191,11 +203,13 @@ class TestSiteTask(unittest.TestCase):
                 task.create_file_colorbox_aliases()
 
                 compatibility_page = site_root / 'file-colorboxed' / '267'
-                self.assertTrue(compatibility_page.is_symlink())
-                self.assertEqual(
-                    compatibility_page.resolve(),
-                    canonical_page.resolve(),
-                )
+                self.assertFalse(compatibility_page.is_symlink())
+                popup = (compatibility_page / 'index.html').read_text()
+                self.assertIn('/styles/large/specimen.jpg', popup)
+                self.assertIn('data-htmlify-lightbox-version="1"', popup)
+                self.assertNotIn('/logo.png', popup)
+                self.assertNotIn('/licence.png', popup)
+                self.assertNotIn('Site footer', popup)
                 self.assertTrue(task.file_colorbox_aliases_complete())
 
     def test_copy_across_assets_preserves_generated_facet_indexes(
@@ -220,6 +234,7 @@ class TestSiteTask(unittest.TestCase):
             taxonomy_index = destination_assets / 'taxonomy' / '4.json'
             taxonomy_index.parent.mkdir(parents=True)
             taxonomy_index.write_text('{"nodes": []}', encoding='utf-8')
+            taxonomy_index.chmod(0o600)
             (destination_assets / 'stale.js').write_text(
                 'stale asset',
                 encoding='utf-8',
@@ -233,7 +248,11 @@ class TestSiteTask(unittest.TestCase):
                     domain='gadus.myspecies.info',
                     platform_path='/tmp/scratchpads',
                 )
+                self.assertFalse(task.generated_assets_are_web_readable())
                 task.copy_across_assets()
+                generated_assets_are_readable = (
+                    task.generated_assets_are_web_readable()
+                )
 
             self.assertEqual(
                 facet_index.read_text(encoding='utf-8'),
@@ -243,6 +262,8 @@ class TestSiteTask(unittest.TestCase):
                 taxonomy_index.read_text(encoding='utf-8'),
                 '{"nodes": []}',
             )
+            self.assertEqual(taxonomy_index.stat().st_mode & 0o777, 0o644)
+            self.assertTrue(generated_assets_are_readable)
             self.assertEqual(
                 (destination_assets / 'facet-search.js').read_text(
                     encoding='utf-8',

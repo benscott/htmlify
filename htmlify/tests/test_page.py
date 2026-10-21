@@ -51,7 +51,7 @@ class TestPageContent(unittest.TestCase):
         self.assertIs(task._load_slickgrid(soup), soup)
         self.assertIsNotNone(soup.select_one('.slickgrid-wrapper'))
 
-    def test_colorbox_file_link_uses_canonical_archived_file_page(self):
+    def test_colorbox_file_link_keeps_the_chrome_free_popup_route(self):
         task = PageTask(
             url='https://aba.myspecies.info/gallery',
             output_dir='/tmp/site',
@@ -64,7 +64,7 @@ class TestPageContent(unittest.TestCase):
 
         task.process_links(soup)
 
-        self.assertEqual(soup.a['href'], '/file/267')
+        self.assertEqual(soup.a['href'], '/file-colorboxed/267')
 
     def test_protocol_relative_ddev_asset_uses_canonical_request_url(self):
         task = PageTask(
@@ -235,7 +235,7 @@ class TestFacetSearch(unittest.TestCase):
         self.assertIsNotNone(controls.find_parent(id='region-sidebar'))
         self.assertIsNotNone(browser.find_parent(id='region-content'))
         self.assertTrue(
-            soup.find('script', src='/assets/facet-search.js?v=5')['defer']
+            soup.find('script', src='/assets/facet-search.js?v=6')['defer']
         )
         self.assertIsNone(soup.select_one('.block-facetapi'))
         self.assertIsNone(soup.select_one('.block-scratchpads-biblio-search'))
