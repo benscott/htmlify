@@ -138,6 +138,36 @@ class TestSiteTask(unittest.TestCase):
                 )
                 self.assertTrue(task.site_aliases_complete())
 
+    def test_alias_to_unpublished_node_is_not_created_or_required(self):
+        with TemporaryDirectory() as temporary_directory:
+            sites_root = Path(temporary_directory)
+            site_root = sites_root / 'aba.myspecies.info'
+            published = site_root / 'node' / '22' / 'index.html'
+            published.parent.mkdir(parents=True)
+            published.write_text('published', encoding='utf-8')
+            stale_alias = site_root / 'old-unpublished-page'
+            stale_alias.symlink_to(site_root / 'node' / '21')
+            aliases = [
+                ('old-unpublished-page', 'node/21'),
+                ('current-page', 'node/22'),
+            ]
+
+            with (
+                patch('htmlify.tasks.site.SITES_DIR', sites_root),
+                patch('htmlify.tasks.site.get_site_aliases', return_value=aliases),
+            ):
+                task = SiteTask(
+                    domain='aba.myspecies.info',
+                    platform_path='/tmp/scratchpads',
+                )
+                sitemap_paths = ['', 'node/22']
+                task.create_site_aliases(sitemap_paths)
+
+                self.assertFalse(stale_alias.exists())
+                self.assertFalse(stale_alias.is_symlink())
+                self.assertTrue((site_root / 'current-page').is_symlink())
+                self.assertTrue(task.site_aliases_complete(sitemap_paths))
+
     def test_legacy_colorbox_directory_links_missing_ids_to_file_pages(self):
         with TemporaryDirectory() as temporary_directory:
             sites_root = Path(temporary_directory)

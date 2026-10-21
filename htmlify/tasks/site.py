@@ -199,9 +199,33 @@ class SiteTask(BaseTask):
 
         shutil.copytree(ASSETS_DIR, dest_assets_dir, dirs_exist_ok=True)
 
-    def _alias_mappings(self):
+    def _alias_target_should_exist(self, target, sitemap_paths):
+        target = self.normalise_page_path(target)
+        if target not in sitemap_paths:
+            return False
+
+        task = PageTask(
+            url=self.path_to_url(target),
+            output_dir=self.output().path,
+        )
+        if Path(task.output().path).exists():
+            return True
+        # A current skip marker means the route was deliberately omitted
+        # after being requested (empty content, 404, access denied, etc.).
+        if task.skipped_path.exists() and task.complete():
+            return False
+        return True
+
+    def _alias_mappings(self, sitemap_paths=None):
         """Return unique, safe aliases and whether each contains aliases."""
+        if sitemap_paths is not None:
+            sitemap_paths = {
+                self.normalise_page_path(path)
+                for path in sitemap_paths
+            }
         mappings = {}
+        skipped_targets = 0
+        skipped_aliases = set()
         for alias, target in get_site_aliases(self.domain):
             alias = str(alias).strip('/')
             target = str(target).strip('/')
@@ -215,7 +239,23 @@ class SiteTask(BaseTask):
                     f'Ignoring unsafe site alias {alias!r} -> {target!r}'
                 )
                 continue
+            if (
+                sitemap_paths is not None
+                and not self._alias_target_should_exist(
+                    target,
+                    sitemap_paths,
+                )
+            ):
+                skipped_targets += 1
+                skipped_aliases.add(alias)
+                continue
             mappings[alias] = target
+
+        if skipped_targets:
+            logger.info(
+                f'Skipping {skipped_targets} aliases whose targets are not '
+                f'part of the {self.domain} archive'
+            )
 
         parent_aliases = set()
         for alias in mappings:
@@ -225,7 +265,7 @@ class SiteTask(BaseTask):
                 if parent in mappings:
                     parent_aliases.add(parent)
 
-        return mappings, parent_aliases
+        return mappings, parent_aliases, skipped_aliases
 
     @staticmethod
     def _ensure_symlink(link_path, target_path, *, target_is_directory=False):
@@ -243,9 +283,22 @@ class SiteTask(BaseTask):
             target_is_directory=target_is_directory,
         )
 
-    def create_site_aliases(self):
+    def create_site_aliases(self, sitemap_paths=None):
         sites_dir = Path(self.output().path)
-        mappings, parent_aliases = self._alias_mappings()
+        mappings, parent_aliases, skipped_aliases = self._alias_mappings(
+            sitemap_paths,
+        )
+
+        # Remove broken aliases produced by an older run, but never remove a
+        # real directory that may contain another valid nested alias.
+        for alias in skipped_aliases:
+            link_path = sites_dir / alias
+            if link_path.is_symlink():
+                link_path.unlink()
+            elif link_path.is_dir():
+                index_path = link_path / 'index.html'
+                if index_path.is_symlink():
+                    index_path.unlink()
 
         # Parent aliases must be real directories so their child aliases can
         # coexist. Their own route is represented by an index.html symlink.
@@ -313,9 +366,11 @@ class SiteTask(BaseTask):
             for child in canonical_dir.iterdir()
         )
 
-    def site_aliases_complete(self):
+    def site_aliases_complete(self, sitemap_paths=None):
         sites_dir = Path(self.output().path)
-        mappings, parent_aliases = self._alias_mappings()
+        mappings, parent_aliases, _skipped_aliases = self._alias_mappings(
+            sitemap_paths,
+        )
 
         for alias, target in mappings.items():
             if alias in parent_aliases:
@@ -402,7 +457,7 @@ class SiteTask(BaseTask):
         # filtered test can satisfy Luigi without marking the site complete.
         if not self.is_filtered_run:
             logger.debug('Creating site aliases')
-            self.create_site_aliases()
+            self.create_site_aliases(all_links)
 
         completion_target = self.completion_output()
         Path(completion_target.path).parent.mkdir(parents=True, exist_ok=True)
@@ -467,7 +522,9 @@ class SiteTask(BaseTask):
         if not self.file_colorbox_aliases_complete():
             return False
 
-        if not self.site_aliases_complete():
+        with SiteMapTask(domain=self.domain).output().open() as sitemap:
+            sitemap_paths = yaml.full_load(sitemap) or []
+        if not self.site_aliases_complete(sitemap_paths):
             return False
             
         db_manager.close_connection(self.domain)
