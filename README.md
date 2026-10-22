@@ -1,7 +1,115 @@
 # htmlify
 Convert Scratchpads to HTML
 
-pip install -e .
+Install the project dependencies from the repository root:
+
+```bash
+uv sync
+```
+
+## Useful commands
+
+Run these commands from the repository root. Use `uv run htmlify --help` or
+`uv run htmlify COMMAND --help` for the complete option list.
+
+### List sites, URL counts, and archive status
+
+Read the existing sitemap files without connecting to Drupal or its databases:
+
+```bash
+uv run htmlify sitemaps --status-only
+```
+
+The output lists every site, its sitemap URL count, and whether its archive is
+`complete`, `stale`, `partial`, or `not run`. It also prints totals. To save the
+same inventory as JSON:
+
+```bash
+uv run htmlify sitemaps --status-only \
+  --report sitemap-inventory.json
+```
+
+Build or refresh the sitemap for one production site, without rendering its
+pages:
+
+```bash
+uv run htmlify sitemaps \
+  --domain example.myspecies.info \
+  --force
+```
+
+Build missing or stale sitemaps for all registered sites:
+
+```bash
+uv run htmlify sitemaps --workers 10
+```
+
+### Generate a site
+
+Generate one complete production site:
+
+```bash
+uv run htmlify migrate \
+  --domain example.myspecies.info
+```
+
+Use one worker when diagnosing a page that appears to hang or fail. This makes
+the relevant error much easier to associate with its page:
+
+```bash
+uv run htmlify migrate \
+  --domain example.myspecies.info \
+  --workers 1
+```
+
+Generate one page plus the homepage:
+
+```bash
+uv run htmlify migrate \
+  --domain example.myspecies.info \
+  --page biblio
+```
+
+Generate a batch of 100 taxonomy pages plus the homepage:
+
+```bash
+uv run htmlify migrate \
+  --domain example.myspecies.info \
+  --page-prefix taxonomy/term \
+  --page-limit 100
+```
+
+Add `--page-offset 100` for the next batch.
+
+### Inspect and validate an archive
+
+Serve one generated site locally, then open <http://localhost:8000/>:
+
+```bash
+uv run python -m http.server 8000 \
+  --directory /path/to/sites/example.myspecies.info
+```
+
+Check the generated site for missing internal pages, files, references, and
+broken symlinks:
+
+```bash
+uv run htmlify validate-site \
+  /path/to/sites/example.myspecies.info \
+  --report site-validation.json
+```
+
+Follow worker errors while a migration is running:
+
+```bash
+tail -f data/.log/error.log
+```
+
+### Run the tests
+
+```bash
+uv run python -m unittest discover -s htmlify/tests
+```
 
 ## Apache
 
@@ -35,7 +143,7 @@ Run a single canonical site through the local Drupal instance without changing
 the URLs written to the archive:
 
 ```bash
-htmlify migrate \
+uv run htmlify migrate \
   --domain gadus.myspecies.info \
   --ddev-project /Users/ben/Projects/Scratchpads/Code/scratchpads2
 ```
@@ -157,7 +265,7 @@ uv run htmlify migrate --domain example.myspecies.info \
 On the archive server, generate HTML without creating a local `sites` symlink:
 
 ```bash
-htmlify migrate --domain example.myspecies.info --files-mode external
+uv run htmlify migrate --domain example.myspecies.info --files-mode external
 ```
 
 Copy the required Drupal file tree separately with rsync. A trailing slash on
@@ -170,7 +278,7 @@ rsync -a --delete /source/sites/ /archive/example.myspecies.info/sites/
 Validate every copied file by relative path, type, size, and SHA-256 checksum:
 
 ```bash
-htmlify validate-copy \
+uv run htmlify validate-copy \
   /source/sites/ \
   /archive/example.myspecies.info/sites/ \
   --checksums \
@@ -185,7 +293,7 @@ The validator exits non-zero for missing, changed, or extra files. Use
 Scan a completed static site for missing internal pages and files:
 
 ```bash
-htmlify validate-site \
+uv run htmlify validate-site \
   /archive/example.myspecies.info \
   --report /archive/example.myspecies.info/site-validation.json
 ```

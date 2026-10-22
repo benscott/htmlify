@@ -240,6 +240,19 @@ class PageTask(BaseTask):
         if species_vid:
             self._write_species_tab_redirects(soup, species_tid)
 
+        # Luigi dynamic dependencies can otherwise loop forever when run()
+        # writes output which complete() still rejects. Fail the page once
+        # with the recorded completion reason instead.
+        if not self.force and not self.complete():
+            reason = getattr(
+                self,
+                '_last_incomplete_reason',
+                'unknown completion check',
+            )
+            raise RuntimeError(
+                f'Generated page is still incomplete: {self.url}: {reason}'
+            )
+
     def disable_autocomplete(self, soup):            
         autocomplete_els = soup.find_all(class_='autocomplete')
         for el in autocomplete_els:
@@ -263,18 +276,11 @@ class PageTask(BaseTask):
                 el.decompose()                
     
     def process_facets(self, soup):
-        facet_blocks = soup.find_all('section', {"class": "block-facetapi"})
-
-        for facet_block in facet_blocks:
-
-            # Remove the search facet input
-            if facet_form := facet_block.find('form'):
-                facet_form.decompose()
-
-            ul = facet_block.find('ul', {"class": "facetapi-facetapi-links"})
-            # If we don't have links, remvoe the block
-            if not ul or not ul.find_all('a'):
-                facet_block.decompose()
+        # Faceted result pages have already replaced these live Drupal/Solr
+        # blocks with htmlify's static controls. Any blocks left on ordinary
+        # pages cannot work without Drupal and must not survive into output.
+        for facet_block in soup.select('.block-facetapi'):
+            facet_block.decompose()
     
     def _base_term_path(self, url):
 
@@ -330,11 +336,11 @@ class PageTask(BaseTask):
 
     def complete(self):
         if self.force:
-            return False
+            return self._incomplete('task was forced')
         output_path = Path(self.output().path)
         if not output_path.exists():
             if not self.skipped_path.exists():
-                return False
+                return self._incomplete('output and skip marker are missing')
             first_line = self.skipped_path.read_text(
                 encoding='utf-8',
                 errors='ignore',
@@ -344,7 +350,9 @@ class PageTask(BaseTask):
                 return not bool(self._user_profile_id())
 
             if self._classification_vid():
-                return False
+                return self._incomplete(
+                    'legacy classification skip marker must be revisited'
+                )
 
             # Legacy biological term pages were commonly marked empty because
             # their useful content lived on child tabs. Revisit only those old
@@ -369,19 +377,19 @@ class PageTask(BaseTask):
             f'data-htmlify-page-version="{PAGE_ARCHIVE_VERSION}"' not in html
             or f'data-htmlify-domain="{self.domain}"' not in html
         ):
-            return False
+            return self._incomplete('page or domain version marker is stale')
         if species_vid:
             version = (
                 f'data-htmlify-species-version="{SPECIES_PAGE_VERSION}"'
             )
             if version not in html:
-                return False
+                return self._incomplete('species page version is stale')
             taxonomy_index = (
                 Path(self.output_dir)
                 / taxonomy_asset_url(species_vid).lstrip('/')
             )
             if not taxonomy_index.exists():
-                return False
+                return self._incomplete('taxonomy JSON index is missing')
         else:
             configured_facets = configured_facet_definitions(self._url.path)
         if not species_vid and (
@@ -390,26 +398,26 @@ class PageTask(BaseTask):
         ):
             version = f'data-htmlify-facet-version="{FACET_PAGE_VERSION}"'
             if version not in html:
-                return False
+                return self._incomplete('facet page version is stale')
             fingerprint = facet_configuration_fingerprint(self._url.path)
             if (
                 fingerprint
                 and f'data-htmlify-facet-config="{fingerprint}"' not in html
             ):
-                return False
+                return self._incomplete('facet configuration has changed')
         if 'htmlify-biblio-browser' in html:
-            return False
+            return self._incomplete('legacy bibliography browser remains')
         if re.search(
             r'href=["\']/biblio/(?:author|keyword)/\d+/?["\']',
             html,
         ):
-            return False
+            return self._incomplete('legacy bibliography filter link remains')
         if (
             re.search(r'href=["\']/user/\d+/?["\']', html)
             and f'data-htmlify-user-links-version="{USER_LINK_VERSION}"'
             not in html
         ):
-            return False
+            return self._incomplete('user links have not been processed')
         user_link_version = re.search(
             r'data-htmlify-user-links-version=["\']([^"\']+)["\']',
             html,
@@ -418,17 +426,23 @@ class PageTask(BaseTask):
             user_link_version
             and user_link_version.group(1) != USER_LINK_VERSION
         ):
-            return False
+            return self._incomplete('user-link processing version is stale')
         if 'block-facetapi' in html and not self._is_search_page():
-            return False
+            return self._incomplete('Facet API blocks have not been processed')
         if 'htmlify-facet-browser' in html:
             match = re.search(r'data-index-url=["\']([^"\']+)["\']', html)
             if not match:
-                return False
+                return self._incomplete('facet browser has no JSON index URL')
             index_path = Path(self.output_dir) / match.group(1).lstrip('/')
             if not index_path.exists():
-                return False
+                return self._incomplete('facet JSON index is missing')
+        self._last_incomplete_reason = None
         return True
+
+    def _incomplete(self, reason):
+        self._last_incomplete_reason = reason
+        logger.debug(f'Page incomplete {self.url}: {reason}')
+        return False
 
     def _species_term_id(self):
         match = re.fullmatch(r'/taxonomy/term/(\d+)', self._url.path or '')

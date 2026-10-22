@@ -324,6 +324,73 @@ class TestPageContent(unittest.TestCase):
 
 class TestFacetSearch(unittest.TestCase):
 
+    def test_live_facet_sidebar_is_removed_from_an_ordinary_page(self):
+        with tempfile.TemporaryDirectory() as directory:
+            task = PageTask(
+                url='https://acanthaceae.myspecies.info/node/1',
+                output_dir=Path(directory),
+            )
+            soup = BeautifulSoup(
+                '<html data-htmlify-page-version="1" '
+                'data-htmlify-domain="acanthaceae.myspecies.info"><body>'
+                '<section class="block-facetapi"><ul '
+                'class="facetapi-facetapi-links">'
+                '<li><a href="/biblio">Literature</a></li>'
+                '</ul></section></body></html>',
+                'html.parser',
+            )
+
+            task.process_facets(soup)
+            output = Path(task.output().path)
+            output.parent.mkdir(parents=True)
+            output.write_text(str(soup), encoding='utf-8')
+
+            with (
+                patch(
+                    'htmlify.tasks.page.configured_facet_definitions',
+                    return_value=[],
+                ),
+                patch(
+                    'htmlify.tasks.page.is_configured_facet_page',
+                    return_value=False,
+                ),
+            ):
+                self.assertTrue(task.complete())
+
+            self.assertIsNone(soup.select_one('.block-facetapi'))
+
+    def test_unprocessed_facet_sidebar_is_incomplete(self):
+        with tempfile.TemporaryDirectory() as directory:
+            task = PageTask(
+                url='https://acanthaceae.myspecies.info/node/1',
+                output_dir=Path(directory),
+            )
+            output = Path(task.output().path)
+            output.parent.mkdir(parents=True)
+            output.write_text(
+                '<html data-htmlify-page-version="1" '
+                'data-htmlify-domain="acanthaceae.myspecies.info"><body>'
+                '<section class="block-facetapi">Legacy facet</section>'
+                '</body></html>',
+                encoding='utf-8',
+            )
+
+            with (
+                patch(
+                    'htmlify.tasks.page.configured_facet_definitions',
+                    return_value=[],
+                ),
+                patch(
+                    'htmlify.tasks.page.is_configured_facet_page',
+                    return_value=False,
+                ),
+            ):
+                self.assertFalse(task.complete())
+                self.assertEqual(
+                    task._last_incomplete_reason,
+                    'Facet API blocks have not been processed',
+                )
+
     def test_replaces_facets_and_results_with_static_search(self):
         task = PageTask(
             url='https://phthiraptera.myspecies.info/biblio',
