@@ -216,6 +216,11 @@ class PageTask(BaseTask):
         self.remove_feeds(soup)
         self._prune_empty_species_panels(soup)
 
+        # Some Drupal render callbacks can leave Biblio author/keyword anchors
+        # in the final node markup. Run this narrow, idempotent conversion at
+        # the end as well as handling them during general link processing.
+        self.process_biblio_links(soup)
+
         # Create a new link tag for the stylesheet
         if soup.head:
             new_stylesheet = soup.new_tag(
@@ -980,6 +985,16 @@ class PageTask(BaseTask):
                 continue
 
             a['href'] = url.to_path()
+
+    def process_biblio_links(self, soup):
+        """Convert any final Drupal Biblio filter anchors to static facets."""
+        for link in soup.find_all('a', href=True):
+            href = link.get('href')
+            if (
+                is_internal_url(href, self.domain)
+                and (facet_href := self._biblio_facet_href(href))
+            ):
+                link['href'] = facet_href
 
     def _linked_user_id(self, href):
         if not is_internal_url(href, self.domain):

@@ -91,6 +91,31 @@ class TestPageContent(unittest.TestCase):
             ],
         )
 
+    def test_final_biblio_link_pass_is_safe_and_idempotent(self):
+        task = PageTask(
+            url='https://acanthaceae.myspecies.info/node/4',
+            output_dir='/tmp/site',
+        )
+        soup = BeautifulSoup(
+            '''
+            <a href="/biblio/author/6" rel="nofollow">V. A. W. Graham</a>
+            <a href="/biblio?facet=im_biblio_contributor%3A7">Converted</a>
+            <a href="https://example.org/biblio/author/8">External</a>
+            ''',
+            'html.parser',
+        )
+
+        task.process_biblio_links(soup)
+
+        self.assertEqual(
+            [link['href'] for link in soup.find_all('a')],
+            [
+                '/biblio?facet=im_biblio_contributor%3A6',
+                '/biblio?facet=im_biblio_contributor%3A7',
+                'https://example.org/biblio/author/8',
+            ],
+        )
+
     def test_page_with_legacy_biblio_filter_links_is_incomplete(self):
         with tempfile.TemporaryDirectory() as directory:
             task = PageTask(
