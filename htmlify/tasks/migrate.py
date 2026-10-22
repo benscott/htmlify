@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 
 
 from htmlify.config import DATA_DIR, logger
+from htmlify import config
+from htmlify.inventory import sitemap_url_count
 from htmlify.tasks.base import BaseExternalTask, BaseTask
 from htmlify.tasks.sites_list import SitesListTask
 from htmlify.tasks.site import SiteTask
@@ -24,6 +26,8 @@ class MigrateTask(BaseTask):
     page_prefix = luigi.OptionalParameter(default=None)
     page_limit = luigi.OptionalIntParameter(default=None)
     page_offset = luigi.IntParameter(default=0)
+    sort_by = luigi.Parameter(default='name')
+    sort_order = luigi.Parameter(default='asc')
 
     tranche_1_domains = [
         'alkcarb.myspecies.info',
@@ -56,8 +60,13 @@ class MigrateTask(BaseTask):
             if df.empty:
                 raise Exception(f'No domain matching {self.domain}')
             logger.debug(f'Migrating site {self.domain}')
-        else:            
-            df = df.sort_values(by=['domain'])   
+        else:
+            # Sort and slice only sites that can actually be scheduled. This
+            # keeps --limit accurate and avoids requiring counts for the
+            # deliberately excluded tranche.
+            df = df[df.platform_path.notnull()]
+            df = df[~df.resolved_domain.isin(self.tranche_1_domains)]
+            df = self.order_sites(df)
 
         if self.offset:
             df = df.iloc[self.offset:]         
@@ -80,7 +89,13 @@ class MigrateTask(BaseTask):
                 logger.critical(f'Skipping site {domain} - under maintenance')
                 continue
 
-            logger.debug(f'Queuing site {i} - {domain}')
+            count = row.get('_sitemap_urls')
+            count_label = (
+                f' ({int(count):,} URLs)'
+                if count is not None and not pd.isna(count)
+                else ''
+            )
+            logger.info(f'Queuing site {i + 1} - {domain}{count_label}')
 
         #     # if row.domain == 'microgastrinae.myspecies.info': continue
 
@@ -92,6 +107,53 @@ class MigrateTask(BaseTask):
                 page_limit=self.page_limit,
                 page_offset=self.page_offset,
             )
+
+    def order_sites(self, sites):
+        """Order multi-site migrations by hostname or existing URL count."""
+        if self.sort_by not in {'name', 'url-count'}:
+            raise ValueError('sort_by must be "name" or "url-count"')
+        if self.sort_order not in {'asc', 'desc'}:
+            raise ValueError('sort_order must be "asc" or "desc"')
+
+        ascending = self.sort_order == 'asc'
+        if self.sort_by == 'name':
+            return sites.sort_values(
+                by=['resolved_domain'],
+                ascending=ascending,
+                kind='stable',
+            )
+
+        counts = {}
+        missing = []
+        for domain in sites.resolved_domain.astype(str):
+            sitemap_path = (
+                config.PROCESSING_DATA_DIR
+                / 'sitemaps'
+                / f'{domain}.yaml'
+            )
+            count = sitemap_url_count(sitemap_path)
+            if count is None:
+                missing.append(domain)
+            else:
+                counts[domain] = count
+
+        if missing:
+            examples = ', '.join(sorted(missing)[:5])
+            if len(missing) > 5:
+                examples += f', and {len(missing) - 5} more'
+            raise RuntimeError(
+                'URL-count ordering requires an existing sitemap for every '
+                f'selected site. Missing {len(missing)}: {examples}. '
+                'Run `uv run htmlify sitemaps` first.'
+            )
+
+        ordered = sites.copy()
+        ordered['_sitemap_urls'] = ordered.resolved_domain.map(counts)
+        return ordered.sort_values(
+            by=['_sitemap_urls', 'resolved_domain'],
+            ascending=[ascending, True],
+            kind='stable',
+        )
 
     # def resolve_non_myspecies_domain(self, domain):
 

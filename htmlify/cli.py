@@ -521,6 +521,18 @@ def migrate(
         '--page-offset',
         help='Skip this many matching pages before applying --page-limit.',
     ),
+    sort_by: str = typer.Option(
+        'name',
+        '--sort-by',
+        '--sort',
+        help='Order multi-site runs by "name" or "url-count".',
+    ),
+    sort_order: str = typer.Option(
+        'asc',
+        '--sort-order',
+        '--order',
+        help='Use ascending ("asc") or descending ("desc") order.',
+    ),
     ):
 
     task_params = {
@@ -533,6 +545,14 @@ def migrate(
         raise typer.BadParameter('--page-limit must be at least 1')
     if page_offset < 0:
         raise typer.BadParameter('--page-offset cannot be negative')
+    if sort_by not in {'name', 'url-count'}:
+        raise typer.BadParameter(
+            '--sort-by must be "name" or "url-count"'
+        )
+    if sort_order not in {'asc', 'desc'}:
+        raise typer.BadParameter(
+            '--sort-order must be "asc" or "desc"'
+        )
     if (page or page_prefix or page_limit is not None or page_offset) and not domain:
         raise typer.BadParameter('page filters require --domain')
 
@@ -541,6 +561,8 @@ def migrate(
         'page_prefix': page_prefix,
         'page_limit': page_limit,
         'page_offset': page_offset,
+        'sort_by': sort_by,
+        'sort_order': sort_order,
     })
 
     if files_mode:
@@ -609,11 +631,21 @@ def migrate(
         typer.secho(f"Migrating domain {domain}", fg=typer.colors.YELLOW) 
     elif limit:
         if offset:
-            typer.secho(f"Migrating: {limit} sites, skipping first {offset}", fg=typer.colors.YELLOW) 
+            typer.secho(
+                f'Migrating {limit} sites by {sort_by} {sort_order}, '
+                f'skipping first {offset}',
+                fg=typer.colors.YELLOW,
+            )
         else:
-            typer.secho(f"Migrating: {limit} sites", fg=typer.colors.YELLOW) 
+            typer.secho(
+                f'Migrating {limit} sites by {sort_by} {sort_order}',
+                fg=typer.colors.YELLOW,
+            )
     else:
-        typer.secho(f"Migrating all sites", fg=typer.colors.YELLOW) 
+        typer.secho(
+            f'Migrating all sites by {sort_by} {sort_order}',
+            fg=typer.colors.YELLOW,
+        )
       
     def status_update(task):
         global count

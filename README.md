@@ -53,6 +53,36 @@ uv run htmlify migrate \
   --domain example.myspecies.info
 ```
 
+Generate multiple sites from the smallest sitemap to the largest. Build the
+sitemaps first so every site has a URL count:
+
+```bash
+uv run htmlify sitemaps
+
+uv run htmlify migrate \
+  --sort-by url-count \
+  --sort-order asc
+```
+
+Use `--limit` and `--offset` to run this ordered list in batches:
+
+```bash
+uv run htmlify migrate \
+  --sort url-count \
+  --order asc \
+  --limit 20 \
+  --offset 0
+```
+
+`--sort` is an alias for `--sort-by`, and `--order` is an alias for
+`--sort-order`. Sites can instead be ordered alphabetically in either
+direction:
+
+```bash
+uv run htmlify migrate --sort name --order asc
+uv run htmlify migrate --sort name --order desc
+```
+
 Use one worker when diagnosing a page that appears to hang or fail. This makes
 the relevant error much easier to associate with its page:
 
