@@ -7,10 +7,68 @@ from bs4 import BeautifulSoup
 import requests
 
 from htmlify import config
+from htmlify.exposed_views import EXPOSED_VIEW_VERSION
 from htmlify.tasks.page import PageTask, STATIC_ASSET_VERSION
 
 
 class TestPageContent(unittest.TestCase):
+
+    def test_old_exposed_view_page_is_revisited(self):
+        with tempfile.TemporaryDirectory() as directory:
+            task = PageTask(
+                url='https://example.org/people',
+                output_dir=Path(directory),
+            )
+            output = Path(task.output().path)
+            output.parent.mkdir(parents=True)
+            output.write_text(
+                '<html data-htmlify-page-version="1" '
+                'data-htmlify-domain="example.org"><body>'
+                '<div class="views-exposed-form"></div>'
+                '</body></html>',
+                encoding='utf-8',
+            )
+
+            with (
+                patch(
+                    'htmlify.tasks.page.configured_facet_definitions',
+                    return_value=[],
+                ),
+                patch(
+                    'htmlify.tasks.page.is_configured_facet_page',
+                    return_value=False,
+                ),
+            ):
+                self.assertFalse(task.complete())
+
+    def test_static_exposed_view_requires_search_script(self):
+        with tempfile.TemporaryDirectory() as directory:
+            task = PageTask(
+                url='https://example.org/people',
+                output_dir=Path(directory),
+            )
+            output = Path(task.output().path)
+            output.parent.mkdir(parents=True)
+            output.write_text(
+                '<html data-htmlify-page-version="1" '
+                'data-htmlify-domain="example.org" '
+                f'data-htmlify-exposed-view-version="{EXPOSED_VIEW_VERSION}">'
+                '<body><div class="views-exposed-form"></div></body></html>',
+                encoding='utf-8',
+            )
+
+            with (
+                patch(
+                    'htmlify.tasks.page.configured_facet_definitions',
+                    return_value=[],
+                ),
+                patch(
+                    'htmlify.tasks.page.is_configured_facet_page',
+                    return_value=False,
+                ),
+            ):
+                self.assertFalse(task.complete())
+
 
     def test_slickgrid_parser_accepts_legacy_javascript_variants(self):
         task = PageTask(

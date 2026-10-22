@@ -62,6 +62,10 @@ from htmlify.facets import (
     merge_facet_definitions,
     write_facet_index,
 )
+from htmlify.exposed_views import (
+    EXPOSED_VIEW_VERSION,
+    staticize_exposed_views,
+)
 from htmlify.taxonomy import (
     biological_vid_for_term,
     taxonomy_asset_url,
@@ -72,7 +76,7 @@ from htmlify.taxonomy import (
 SPECIES_PAGE_VERSION = '5'
 SKIPPED_PAGE_VERSION = '3'
 FACET_PAGE_VERSION = '11'
-STATIC_ASSET_VERSION = '8'
+STATIC_ASSET_VERSION = '9'
 PAGE_ARCHIVE_VERSION = '1'
 USER_LINK_VERSION = '3'
 
@@ -192,6 +196,13 @@ class PageTask(BaseTask):
         if is_facet_page:
             self.facet_page(soup, facet_definitions, result_hints)
 
+        # Ordinary Drupal Views can expose database-backed filters without
+        # using Solr/Facet API. Merge their pager results before processing
+        # assets and links, then make the rendered form work client-side.
+        exposed_view_count = 0
+        if not species_vid and not is_facet_page:
+            exposed_view_count = staticize_exposed_views(soup, self.url)
+
         self.process_css_style_urls(soup)
         self.process_css(soup)
         self.process_js(soup)
@@ -229,6 +240,16 @@ class PageTask(BaseTask):
                 href=f'/assets/style.css?v={STATIC_ASSET_VERSION}',
             )
             soup.head.append(new_stylesheet)
+
+        if exposed_view_count and soup.body:
+            exposed_script = f'/assets/exposed-view-search.js?v={STATIC_ASSET_VERSION}'
+            if not soup.find('script', src=exposed_script):
+                script = soup.new_tag(
+                    'script',
+                    src=exposed_script,
+                    defer=True,
+                )
+                soup.body.append(script)
 
         if soup.html:
             soup.html['data-htmlify-page-version'] = PAGE_ARCHIVE_VERSION
@@ -434,6 +455,18 @@ class PageTask(BaseTask):
             return self._incomplete('user-link processing version is stale')
         if 'block-facetapi' in html and not self._is_search_page():
             return self._incomplete('Facet API blocks have not been processed')
+        if (
+            not species_vid
+            and 'data-htmlify-facet-version=' not in html
+            and 'views-exposed-form' in html
+            and f'data-htmlify-exposed-view-version="{EXPOSED_VIEW_VERSION}"'
+            not in html
+        ):
+            return self._incomplete('exposed View has not been made static')
+        if f'data-htmlify-exposed-view-version="{EXPOSED_VIEW_VERSION}"' in html:
+            script = f'/assets/exposed-view-search.js?v={STATIC_ASSET_VERSION}'
+            if script not in html:
+                return self._incomplete('exposed View search script is missing')
         if 'htmlify-facet-browser' in html:
             match = re.search(r'data-index-url=["\']([^"\']+)["\']', html)
             if not match:

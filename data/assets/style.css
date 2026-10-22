@@ -143,6 +143,42 @@
     justify-content: center;
 }
 
+.htmlify-exposed-view-search .views-exposed-widgets {
+    align-items: end;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75em;
+}
+
+.htmlify-exposed-view-search .views-exposed-widget {
+    float: none;
+    padding: 0;
+}
+
+.htmlify-exposed-view-search input[type="text"],
+.htmlify-exposed-view-search input[type="search"],
+.htmlify-exposed-view-search select {
+    box-sizing: border-box;
+    max-width: 100%;
+}
+
+.htmlify-exposed-view-status {
+    color: #555;
+    margin: 1em 0;
+}
+
+.htmlify-exposed-view-pagination {
+    align-items: center;
+    display: flex;
+    gap: 1em;
+    justify-content: center;
+    margin-top: 1.5em;
+}
+
+.htmlify-exposed-view--enhanced .htmlify-exposed-view-row[hidden] {
+    display: none !important;
+}
+
 @media (max-width: 600px) {
     .htmlify-facet-search-controls {
         align-items: stretch;
