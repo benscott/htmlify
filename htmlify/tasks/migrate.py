@@ -10,18 +10,18 @@ from urllib.parse import urlparse
 
 from htmlify.config import DATA_DIR, logger
 from htmlify import config
-from htmlify.inventory import sitemap_url_count
+from htmlify.inventory import sitemap_url_count, site_run_status
 from htmlify.tasks.base import BaseExternalTask, BaseTask
 from htmlify.tasks.sites_list import SitesListTask
-from htmlify.tasks.site import SiteTask
+from htmlify.tasks.site import SiteTask, STATIC_ARCHIVE_VERSION
 from htmlify.utils import is_under_maintenance
        
 class MigrateTask(BaseTask):
 
-    domain = luigi.Parameter(default=None) 
-    limit = luigi.IntParameter(default=None) 
-    offset = luigi.IntParameter(default=None) 
-    platform_path = luigi.Parameter(default=None, significant=False)
+    domain = luigi.OptionalParameter(default=None)
+    limit = luigi.OptionalIntParameter(default=None)
+    offset = luigi.IntParameter(default=0)
+    platform_path = luigi.OptionalParameter(default=None, significant=False)
     page_path = luigi.OptionalParameter(default=None)
     page_prefix = luigi.OptionalParameter(default=None)
     page_limit = luigi.OptionalIntParameter(default=None)
@@ -55,27 +55,10 @@ class MigrateTask(BaseTask):
 
         df = pd.read_csv(sites_list_task.output().path)
 
-        if self.domain:
-            df = df[df.resolved_domain == self.domain]
-            if df.empty:
-                raise Exception(f'No domain matching {self.domain}')
-            logger.debug(f'Migrating site {self.domain}')
-        else:
-            # Sort and slice only sites that can actually be scheduled. This
-            # keeps --limit accurate and avoids requiring counts for the
-            # deliberately excluded tranche.
-            df = df[df.platform_path.notnull()]
-            df = df[~df.resolved_domain.isin(self.tranche_1_domains)]
-            df = self.order_sites(df)
+        df = self.select_sites(df)
 
-        if self.offset:
-            df = df.iloc[self.offset:]         
-
-        if self.limit:
-            df = df.iloc[:self.limit]
-        
         logger.debug(f'Migrating {len(df)} sites')
-            
+
         for i, (idx, row) in enumerate(df[df.platform_path.notnull()].iterrows()):
             domain = row.resolved_domain
 
@@ -107,6 +90,52 @@ class MigrateTask(BaseTask):
                 page_limit=self.page_limit,
                 page_offset=self.page_offset,
             )
+
+    def select_sites(self, df):
+        """Return the sorted, incomplete batch requested by the user."""
+
+        if self.domain:
+            df = df[df.resolved_domain == self.domain]
+            if df.empty:
+                raise Exception(f'No domain matching {self.domain}')
+            logger.debug(f'Migrating site {self.domain}')
+        else:
+            # Sort and slice only sites that can actually be scheduled. This
+            # keeps --limit accurate and avoids requiring counts for the
+            # deliberately excluded tranche.
+            df = df[df.platform_path.notnull()]
+            df = df[~df.resolved_domain.isin(self.tranche_1_domains)]
+            complete = df.resolved_domain.map(self.archive_is_complete)
+            complete_count = int(complete.sum())
+            if complete_count:
+                logger.info(
+                    f'Skipping {complete_count} sites already complete'
+                )
+            df = df[~complete]
+            df = self.order_sites(df)
+
+        if self.offset:
+            df = df.iloc[self.offset:]
+
+        if self.limit:
+            df = df.iloc[:self.limit]
+        return df
+
+    @staticmethod
+    def archive_is_complete(domain):
+        """Use the same lightweight completion status shown by `sitemaps`."""
+        sitemap_path = (
+            config.PROCESSING_DATA_DIR
+            / 'sitemaps'
+            / f'{domain}.yaml'
+        )
+        return site_run_status(
+            domain,
+            sitemap_path,
+            config.SITES_DIR,
+            config.PROCESSING_DATA_DIR,
+            STATIC_ARCHIVE_VERSION,
+        ) == 'complete'
 
     def order_sites(self, sites):
         """Order multi-site migrations by hostname or existing URL count."""

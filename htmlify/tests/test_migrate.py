@@ -1,10 +1,13 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pandas as pd
+from luigi.execution_summary import LuigiStatusCode
+from typer.testing import CliRunner
 
+from htmlify.cli import cli
 from htmlify.tasks.migrate import MigrateTask
 
 
@@ -119,6 +122,59 @@ class TestMigrationOrdering(unittest.TestCase):
                     r'Run `uv run htmlify sitemaps` first',
                 ):
                     task.order_sites(self.sites())
+
+    def test_batch_excludes_complete_sites_before_applying_limit(self):
+        sites = self.sites()
+        sites['platform_path'] = '/var/aegir/platforms/scratchpads'
+        task = MigrateTask(
+            domain=None,
+            limit=2,
+            offset=0,
+            platform_path=None,
+            sort_by='name',
+            sort_order='asc',
+        )
+
+        with patch.object(
+            task,
+            'archive_is_complete',
+            side_effect=lambda domain: domain == 'alpha.myspecies.info',
+        ):
+            selected = task.select_sites(sites)
+
+        self.assertEqual(
+            selected.resolved_domain.tolist(),
+            ['bravo.myspecies.info', 'charlie.myspecies.info'],
+        )
+
+
+class TestMigrationCommand(unittest.TestCase):
+
+    def test_limit_and_offset_are_passed_to_migrate_task(self):
+        runner = CliRunner()
+        build_result = Mock(status=LuigiStatusCode.SUCCESS)
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch('htmlify.cli._require_database_credentials'),
+            patch('htmlify.cli.config.PROCESSING_DATA_DIR', Path(directory)),
+            patch('htmlify.cli.luigi.build', return_value=build_result) as build,
+        ):
+            result = runner.invoke(
+                cli,
+                [
+                    'migrate',
+                    '--sort', 'name',
+                    '--order', 'asc',
+                    '--limit', '2',
+                    '--offset', '3',
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        task = build.call_args.args[0][0]
+        self.assertEqual(task.limit, 2)
+        self.assertEqual(task.offset, 3)
 
 
 if __name__ == '__main__':

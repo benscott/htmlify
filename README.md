@@ -53,6 +53,8 @@ uv run htmlify migrate \
   --domain example.myspecies.info
 ```
 
+### Generate multiple sites
+
 Generate multiple sites from the smallest sitemap to the largest. Build the
 sitemaps first so every site has a URL count:
 
@@ -64,7 +66,8 @@ uv run htmlify migrate \
   --sort-order asc
 ```
 
-Use `--limit` and `--offset` to run this ordered list in batches:
+Use `--limit` and `--offset` to run this ordered list in batches. For example,
+run the first 20 sites:
 
 ```bash
 uv run htmlify migrate \
@@ -73,6 +76,20 @@ uv run htmlify migrate \
   --limit 20 \
   --offset 0
 ```
+
+Then run the next 20 sites:
+
+```bash
+uv run htmlify migrate \
+  --sort url-count \
+  --order asc \
+  --limit 20 \
+  --offset 20
+```
+
+Sites whose current archive completion marker is valid are excluded before
+sorting and batching. Therefore `--limit 20` queues up to 20 incomplete sites,
+and `--offset 20` skips 20 incomplete sites rather than 20 registry entries.
 
 `--sort` is an alias for `--sort-by`, and `--order` is an alias for
 `--sort-order`. Sites can instead be ordered alphabetically in either
@@ -337,3 +354,6 @@ every immediate referrer and every HTML page that loads it. This includes
 tracing a missing CSS image or facet thumbnail back through its stylesheet or
 JSON index to the affected pages. The command exits non-zero when anything is
 missing or unreadable.
+
+
+uv run htmlify sitemaps --status-only

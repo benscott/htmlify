@@ -467,8 +467,18 @@ def sitemaps(
 
 @cli.command("migrate")
 def migrate(
-    limit: Optional[int] = None, 
-    offset: Optional[int] = None, 
+    limit: Optional[int] = typer.Option(
+        None,
+        '--limit',
+        min=1,
+        help='Run at most this many incomplete sites.',
+    ),
+    offset: int = typer.Option(
+        0,
+        '--offset',
+        min=0,
+        help='Skip this many incomplete sites after sorting.',
+    ),
     workers: int = typer.Option(
         10,
         '--workers',
@@ -541,6 +551,10 @@ def migrate(
 
     if page and page_prefix:
         raise typer.BadParameter('--page and --page-prefix cannot be combined')
+    if limit is not None and limit < 1:
+        raise typer.BadParameter('--limit must be at least 1')
+    if offset < 0:
+        raise typer.BadParameter('--offset cannot be negative')
     if page_limit is not None and page_limit < 1:
         raise typer.BadParameter('--page-limit must be at least 1')
     if page_offset < 0:
@@ -557,6 +571,8 @@ def migrate(
         raise typer.BadParameter('page filters require --domain')
 
     task_params.update({
+        'limit': limit,
+        'offset': offset,
         'page_path': page,
         'page_prefix': page_prefix,
         'page_limit': page_limit,
