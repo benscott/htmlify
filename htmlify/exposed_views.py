@@ -10,7 +10,7 @@ from htmlify.config import logger
 from htmlify.utils import get_soup, is_internal_url
 
 
-EXPOSED_VIEW_VERSION = '1'
+EXPOSED_VIEW_VERSION = '2'
 MAX_EXPOSED_VIEW_PAGES = 1000
 
 
@@ -231,11 +231,11 @@ def staticize_exposed_view(soup, view, page_url, fetch=get_soup):
         status['class'] = ['htmlify-exposed-view-status']
         status['aria-live'] = 'polite'
         status.string = f'{len(all_rows)} records.'
-        content.insert_before(status)
+        content.insert(0, status)
         pagination = soup.new_tag('nav')
         pagination['class'] = ['htmlify-exposed-view-pagination']
         pagination['aria-label'] = 'Result pages'
-        content.insert_after(pagination)
+        content.append(pagination)
 
     logger.info(
         'Combined %d records from %d pages for exposed View %s on %s',

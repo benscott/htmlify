@@ -124,6 +124,15 @@ class TestExposedViews(unittest.TestCase):
             ),
             '2 records.',
         )
+        content = first.select_one('.view-content')
+        self.assertIs(
+            first.select_one('.htmlify-exposed-view-status').parent,
+            content,
+        )
+        self.assertIs(
+            first.select_one('.htmlify-exposed-view-pagination').parent,
+            content,
+        )
 
 
 if __name__ == '__main__':
