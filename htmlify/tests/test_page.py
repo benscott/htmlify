@@ -118,7 +118,7 @@ class TestPageContent(unittest.TestCase):
             ):
                 self.assertFalse(task.complete())
 
-    def test_existing_user_references_remain_links(self):
+    def test_user_references_become_plain_text(self):
         task = PageTask(
             url=(
                 'https://abrusinthailand.myspecies.info/'
@@ -130,64 +130,25 @@ class TestPageContent(unittest.TestCase):
             '''
             <html><body>
               <a href="/user/10">Public collector</a>
-              <a href="/user/12">Reference-only collector</a>
+              <a href="https://abrusinthailand.myspecies.info/user/12">
+                Reference-only collector
+              </a>
               <a href="/user/13">Missing collector</a>
             </body></html>
             ''',
             'html.parser',
         )
 
-        with patch(
-            'htmlify.tasks.page.db_manager.fetch',
-            return_value=[(10,), (12,)],
-        ) as fetch:
-            task.process_links(soup)
+        task.process_links(soup)
 
-        self.assertEqual(
-            [(link.get_text(strip=True), link['href']) for link in soup.find_all('a')],
-            [
-                ('Public collector', '/user/10'),
-                ('Reference-only collector', '/user/12'),
-            ],
-        )
+        self.assertEqual(soup.find_all('a'), [])
+        self.assertIn('Public collector', soup.get_text())
+        self.assertIn('Reference-only collector', soup.get_text())
         self.assertIn('Missing collector', soup.get_text())
         self.assertEqual(
             soup.html['data-htmlify-user-links-version'],
-            '2',
+            '3',
         )
-        self.assertIn('uid > 0 AND uid IN (10, 12, 13)', fetch.call_args.args[1])
-
-    def test_blocked_database_user_gets_a_static_profile(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            original_processing_dir = config.PROCESSING_DATA_DIR
-            config.PROCESSING_DATA_DIR = root / 'processing'
-            try:
-                task = PageTask(
-                    url='https://abrusinthailand.myspecies.info/user/33',
-                    output_dir=root / 'site',
-                )
-                with (
-                    patch(
-                        'htmlify.tasks.page.db_manager.fetch_one',
-                        return_value=(33, 'Historic collector', 0),
-                    ),
-                    patch(
-                        'htmlify.tasks.page.is_configured_facet_page',
-                        return_value=False,
-                    ),
-                    patch('htmlify.tasks.page.get_soup') as get_soup,
-                ):
-                    task.run()
-
-                get_soup.assert_not_called()
-                archived = Path(task.output().path).read_text(encoding='utf-8')
-                self.assertIn('Historic collector', archived)
-                self.assertIn('data-htmlify-user-profile-version="1"', archived)
-                self.assertIn('data-htmlify-user-id="33"', archived)
-                self.assertIn('href="/"', archived)
-            finally:
-                config.PROCESSING_DATA_DIR = original_processing_dir
 
     def test_skipped_user_profile_is_revisited(self):
         with tempfile.TemporaryDirectory() as directory:

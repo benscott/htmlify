@@ -22,6 +22,7 @@ class TestSiteMapRoutes(unittest.TestCase):
             'taxonomy/term/%/csv',
             'dwca-export/reference/csv',
             'search/ajax/results',
+            'user/33',
             'news/feed',
             'file-colorboxed/99',
         ]
@@ -99,43 +100,6 @@ class TestSiteMapRoutes(unittest.TestCase):
             self.assertEqual(task.get_forum_urls(), [])
 
         query.assert_not_called()
-
-    def test_users_include_accounts_referenced_by_public_content(self):
-        task = SiteMapTask(domain='abrusinthailand.myspecies.info')
-
-        def query(sql):
-            if "type = 'user_reference'" in sql:
-                return [('field_collector',)]
-            if 'field_data_field_collector' in sql:
-                return [(33,), (55,)]
-            if 'INNER JOIN comment' in sql:
-                return [(44,)]
-            if 'INNER JOIN node' in sql:
-                return [(33,)]
-            if 'status = 1' in sql:
-                return [(10,)]
-            self.fail(f'Unexpected query: {sql}')
-
-        with patch.object(task, '_query', side_effect=query):
-            self.assertEqual(
-                task.get_user_urls(),
-                ['user/10', 'user/33', 'user/44', 'user/55'],
-            )
-
-    def test_unsafe_user_reference_field_name_is_ignored(self):
-        task = SiteMapTask(domain='gadus.myspecies.info')
-        results = [
-            [(10,)],
-            [],
-            [],
-            [('field_collector; DROP TABLE users',)],
-        ]
-
-        with patch.object(task, '_query', side_effect=results) as query:
-            self.assertEqual(task.get_user_urls(), ['user/10'])
-
-        self.assertEqual(query.call_count, 4)
-
 
 if __name__ == '__main__':
     unittest.main()

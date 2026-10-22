@@ -229,30 +229,3 @@
 .htmlify-taxonomy-tree a.active {
     font-weight: bold;
 }
-
-.htmlify-user-profile-page {
-    background: #f5f5f5;
-    color: #333;
-    font-family: Arial, sans-serif;
-    line-height: 1.5;
-    margin: 0;
-}
-
-.htmlify-user-profile-page #page {
-    background: #fff;
-    box-sizing: border-box;
-    margin: 2em auto;
-    max-width: 70em;
-    min-height: 20em;
-    padding: 2em;
-}
-
-.htmlify-user-profile-header {
-    border-bottom: 1px solid #ddd;
-    margin-bottom: 2em;
-    padding-bottom: 1em;
-}
-
-.htmlify-user-profile {
-    max-width: 50em;
-}

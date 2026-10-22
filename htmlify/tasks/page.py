@@ -74,8 +74,7 @@ SKIPPED_PAGE_VERSION = '3'
 FACET_PAGE_VERSION = '11'
 STATIC_ASSET_VERSION = '8'
 PAGE_ARCHIVE_VERSION = '1'
-USER_LINK_VERSION = '2'
-USER_PROFILE_VERSION = '1'
+USER_LINK_VERSION = '3'
 
 class PageTask(BaseTask):
 
@@ -107,34 +106,23 @@ class PageTask(BaseTask):
     def run(self):
         # # self.subdomain = parsed_url.netloc.replace('myspecies.info', '')
 
-        database_user = self._database_user_profile()
-        # Blocked Drupal accounts have valid historic identities but their
-        # live /user/N route is denied to anonymous visitors. Avoid a doomed
-        # request and render the public, minimal archive record directly.
-        if database_user and not database_user['status']:
-            soup = self._database_user_profile_soup(database_user)
-        else:
-            try:
-                if self._classification_vid():
-                    response = request(self.url)
-                    source_path = urlparse(response.url).path.rstrip('/') or '/'
-                    requested_path = self._url.path or '/'
-                    if source_path != requested_path:
-                        self._write_redirect_page(source_path)
-                        return
-                    soup = BeautifulSoup(response.text, features='html.parser')
-                else:
-                    soup = get_soup(self.url)
-            except requests.HTTPError as error:
-                status_code = getattr(error.response, 'status_code', None)
-                if status_code in {401, 403, 404, 410}:
-                    if database_user:
-                        soup = self._database_user_profile_soup(database_user)
-                    else:
-                        self._mark_skipped(f'HTTP {status_code}')
-                        return
-                else:
-                    raise
+        try:
+            if self._classification_vid():
+                response = request(self.url)
+                source_path = urlparse(response.url).path.rstrip('/') or '/'
+                requested_path = self._url.path or '/'
+                if source_path != requested_path:
+                    self._write_redirect_page(source_path)
+                    return
+                soup = BeautifulSoup(response.text, features='html.parser')
+            else:
+                soup = get_soup(self.url)
+        except requests.HTTPError as error:
+            status_code = getattr(error.response, 'status_code', None)
+            if status_code in {401, 403, 404, 410}:
+                self._mark_skipped(f'HTTP {status_code}')
+                return
+            raise
 
         if soup.find('h1', string="Technical difficulties"):
             raise Exception("Technical difficulties")
@@ -453,51 +441,6 @@ class PageTask(BaseTask):
     def _user_profile_id(self):
         match = re.fullmatch(r'/user/(\d+)', self._url.path or '')
         return int(match.group(1)) if match else None
-
-    def _database_user_profile(self):
-        """Return the database identity for a /user/N route, if it exists."""
-        uid = self._user_profile_id()
-        if not uid:
-            return None
-
-        row = db_manager.fetch_one(
-            self.domain,
-            'SELECT uid, name, status FROM users '
-            f'WHERE uid = {uid} AND uid > 0',
-        )
-        if not row:
-            return None
-
-        return {
-            'uid': int(row[0]),
-            'name': str(row[1] or f'User {uid}'),
-            'status': bool(row[2]),
-        }
-
-    def _database_user_profile_soup(self, user):
-        """Build a minimal public profile when Drupal will not render one."""
-        soup = BeautifulSoup(
-            '<!doctype html><html><head><meta charset="utf-8"><title></title>'
-            '</head><body class="htmlify-user-profile-page">'
-            '<div id="page"><header class="htmlify-user-profile-header">'
-            '<a href="/"></a></header><main id="region-content" '
-            'role="main"><div class="region-content-inner">'
-            '<h1 id="page-title"></h1><section id="block-system-main" '
-            'class="htmlify-user-profile"><p></p></section>'
-            '</div></main></div></body></html>',
-            features='html.parser',
-        )
-        name = user['name']
-        soup.title.string = f'{name} | {self.domain}'
-        soup.select_one('.htmlify-user-profile-header a').string = self.domain
-        soup.select_one('#page-title').string = name
-        soup.select_one('.htmlify-user-profile p').string = (
-            'Archived user profile. This account is referenced by content '
-            'retained in this static site.'
-        )
-        soup.html['data-htmlify-user-profile-version'] = USER_PROFILE_VERSION
-        soup.html['data-htmlify-user-id'] = str(user['uid'])
-        return soup
 
     def _write_redirect_page(self, destination):
         destination = '/' + destination.lstrip('/')
@@ -989,18 +932,7 @@ class PageTask(BaseTask):
                 user_id := self._linked_user_id(link.get('href'))
             ) is not None
         }
-        existing_user_ids = None
         if linked_user_ids:
-            identifiers = ', '.join(str(uid) for uid in sorted(linked_user_ids))
-            existing_user_ids = {
-                int(uid)
-                for uid, in db_manager.fetch(
-                    self.domain,
-                    'SELECT uid FROM users '
-                    f'WHERE uid > 0 AND uid IN ({identifiers})',
-                )
-            }
-
             if soup.html:
                 soup.html['data-htmlify-user-links-version'] = (
                     USER_LINK_VERSION
@@ -1012,11 +944,7 @@ class PageTask(BaseTask):
             if href.startswith('#'):
                 continue
             linked_user_id = self._linked_user_id(href)
-            if (
-                linked_user_id is not None
-                and existing_user_ids is not None
-                and linked_user_id not in existing_user_ids
-            ):
+            if linked_user_id is not None:
                 a.unwrap()
                 continue
             if is_decommisionned_link(href):
