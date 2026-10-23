@@ -49,7 +49,7 @@ from htmlify.thumbnails import (
 )
 
 
-STATIC_ARCHIVE_VERSION = '22'
+STATIC_ARCHIVE_VERSION = '23'
 FILE_COLORBOX_VERSION = '1'
 
 

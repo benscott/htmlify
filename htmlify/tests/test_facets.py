@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 
 from htmlify.facets import (
     _file_thumbnail_url,
+    _taxonomy_route_term_id,
     build_facet_index,
     configured_facet_definitions,
     extract_facet_definitions,
@@ -253,6 +254,69 @@ class TestFacetDetection(unittest.TestCase):
 
 
 class TestFacetIndex(unittest.TestCase):
+
+    def test_recognises_all_taxonomy_result_route_variants(self):
+        self.assertEqual(_taxonomy_route_term_id('/taxonomy/term/2496'), 2496)
+        self.assertEqual(
+            _taxonomy_route_term_id('/simpletaxonomy/term/2496'),
+            2496,
+        )
+        self.assertEqual(
+            _taxonomy_route_term_id('/nontaxonomy/term/2496'),
+            2496,
+        )
+        self.assertEqual(
+            _taxonomy_route_term_id('/es/nontaxonomy/term/2496'),
+            2496,
+        )
+
+    def test_taxonomy_route_falls_back_to_tagged_published_nodes(self):
+        solr_calls = []
+
+        def fetch(_domain, query):
+            normalized = ' '.join(query.split())
+            if 'FROM apachesolr_search_page' in normalized:
+                return [(
+                    'nontaxonomy/term/%',
+                    'solr',
+                    serialized({'fq': []}),
+                )]
+            if "name = 'apachesolr_site_hash'" in normalized:
+                return [(serialized('abc123'),)]
+            if 'SELECT nid, title, uid, type FROM node' in normalized:
+                self.assertIn(
+                    'SELECT nid FROM taxonomy_index WHERE tid IN (2496)',
+                    normalized,
+                )
+                return [(1339, 'Familia Chironomidae', 0, 'taxon_description')]
+            raise AssertionError(f'Unexpected query: {normalized}')
+
+        def unavailable_solr(_url, params, timeout):
+            solr_calls.append(params)
+            raise ConnectionError('Solr is offline')
+
+        data = build_facet_index(
+            'aipa.myspecies.info',
+            '/nontaxonomy/term/2496',
+            'Chironomidae',
+            [],
+            [('taxonomy_term', '2496')],
+            fetch=fetch,
+            solr_get=unavailable_solr,
+            solr_url='http://solr:8983/solr/collection1',
+        )
+
+        self.assertEqual(data['records'], [{
+            'id': 'database/node/1339',
+            'title': 'Familia Chironomidae',
+            'url': '/node/1339',
+            'facets': {},
+        }])
+        self.assertEqual(solr_calls[0]['fq'], [
+            'hash:abc123',
+            'tid:2496',
+        ])
+        self.assertEqual(solr_calls[0]['q'], '*:*')
 
     def test_remote_media_uses_drupal_remote_image_style_path(self):
         self.assertEqual(

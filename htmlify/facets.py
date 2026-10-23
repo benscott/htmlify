@@ -553,6 +553,18 @@ def _filter_terms(filters, field):
     return list(dict.fromkeys(values))
 
 
+def _taxonomy_route_term_id(page_path):
+    """Return the contextual term ID used by Drupal taxonomy result routes."""
+    route = str(page_path or '').strip('/')
+    match = re.fullmatch(
+        r'(?:(?:[a-z]{2}(?:-[a-z]{2})?)/)?'
+        r'(?:taxonomy|nontaxonomy|simpletaxonomy)/term/(\d+)',
+        route,
+        flags=re.IGNORECASE,
+    )
+    return int(match.group(1)) if match else None
+
+
 def _id_chunks(values, size=500):
     values = sorted({int(value) for value in values})
     for offset in range(0, len(values), size):
@@ -705,18 +717,36 @@ def _enrich_node_documents(domain, documents, facet_fields, fetch):
                     f'Could not read taxonomic names for {domain}: {error}'
                 )
 
+        if 'tid' in facet_fields:
+            try:
+                rows = fetch(
+                    domain,
+                    'SELECT nid, tid FROM taxonomy_index '
+                    f'WHERE nid IN ({id_list})',
+                )
+                _append_values(documents, rows, 'tid')
+            except Exception as error:
+                logger.warning(
+                    f'Could not read taxonomy assignments for {domain}: {error}'
+                )
+
 
 def _database_documents(domain, filters, result_hints, facet_fields, fetch):
     """Build basic Solr-shaped documents directly from Drupal storage."""
     entity_types = _filter_terms(filters, 'entity_type')
     bundles = _filter_terms(filters, 'bundle')
+    term_ids = _filter_terms(filters, 'tid')
     hinted = OrderedDict()
     for entity_type, entity_id in result_hints:
         if str(entity_id).isdigit():
             hinted.setdefault(entity_type, []).append(int(entity_id))
 
     documents = []
-    if 'node' in entity_types or (not entity_types and hinted.get('node')):
+    if (
+        'node' in entity_types
+        or term_ids
+        or (not entity_types and hinted.get('node'))
+    ):
         conditions = ['status = 1']
         safe_bundles = [bundle for bundle in bundles if SOLR_FIELD.match(bundle)]
         if safe_bundles:
@@ -725,6 +755,12 @@ def _database_documents(domain, filters, result_hints, facet_fields, fetch):
         elif hinted.get('node'):
             ids = ','.join(str(identifier) for identifier in hinted['node'])
             conditions.append(f'nid IN ({ids})')
+        if term_ids:
+            tids = ','.join(str(int(term_id)) for term_id in term_ids)
+            conditions.append(
+                'nid IN (SELECT nid FROM taxonomy_index '
+                f'WHERE tid IN ({tids}))'
+            )
         try:
             rows = fetch(
                 domain,
@@ -921,15 +957,24 @@ def build_facet_index(
     site_hash = _site_hash(domain, fetch)
     filters = [f'hash:{site_hash}'] if site_hash else []
     filters.extend(base_filters)
+    route_term_id = _taxonomy_route_term_id(page_path)
+    if route_term_id is not None:
+        term_filter = f'tid:{route_term_id}'
+        if term_filter not in filters:
+            filters.append(term_filter)
     facet_fields = [facet['field'] for facet in facets]
     solr_documents = []
     try:
         endpoint = _solr_url(domain, env_id, fetch, override=solr_url)
-        if not base_filters:
+        if not base_filters and route_term_id is None:
             filters.extend(
                 _infer_filters(solr_get, endpoint, filters, result_hints)
             )
-        if base_filters or _filter_terms(filters, 'entity_type'):
+        if (
+            base_filters
+            or route_term_id is not None
+            or _filter_terms(filters, 'entity_type')
+        ):
             solr_documents = _fetch_documents(
                 solr_get,
                 endpoint,
