@@ -396,27 +396,74 @@ class SiteTask(BaseTask):
     def create_language_prefix_aliases(self):
         """Make Drupal language-prefixed URLs resolve to the static tree."""
         site_root = Path(self.output().path)
-        for prefix in self.language_prefixes():
-            self._ensure_symlink(
-                site_root / prefix,
-                site_root,
-                target_is_directory=True,
-            )
+        prefixes = set(self.language_prefixes())
+        for prefix in sorted(prefixes):
+            language_root = site_root / prefix
+            if self._runtime_only_language_directory(language_root):
+                shutil.rmtree(language_root)
+            if language_root.is_symlink() or not language_root.exists():
+                self._ensure_symlink(
+                    language_root,
+                    site_root,
+                    target_is_directory=True,
+                )
+                continue
+            if not language_root.is_dir():
+                raise FileExistsError(
+                    f'Cannot create language prefix {language_root}: '
+                    'a non-directory already exists'
+                )
+
+            # Preserve a real prefix directory from an older/partial archive.
+            # Overlay links for each top-level canonical route rather than
+            # deleting any content already present beneath the prefix.
+            for target in site_root.iterdir():
+                if target.name in prefixes:
+                    continue
+                alias = language_root / target.name
+                if alias.exists() and not alias.is_symlink():
+                    continue
+                self._ensure_symlink(
+                    alias,
+                    target,
+                    target_is_directory=target.is_dir(),
+                )
+
+    @staticmethod
+    def _runtime_only_language_directory(path):
+        """Return whether a prefix contains only disposable runtime assets."""
+        if path.is_symlink() or not path.is_dir():
+            return False
+        runtime_entries = {'image_captcha'}
+        return all(child.name in runtime_entries for child in path.iterdir())
 
     def language_prefix_aliases_complete(self):
         """Return whether every configured language prefix aliases the root."""
         site_root = Path(self.output().path)
         expected = site_root.resolve(strict=False)
-        for prefix in self.language_prefixes():
+        prefixes = set(self.language_prefixes())
+        for prefix in prefixes:
             link = site_root / prefix
-            if not link.is_symlink():
-                logger.error(f'LANGUAGE PREFIX {link} does not exist')
+            if link.is_symlink():
+                if link.resolve(strict=False) != expected:
+                    logger.error(
+                        f'LANGUAGE PREFIX {link} does not point to {site_root}'
+                    )
+                    return False
+                continue
+            if not link.is_dir():
+                logger.debug(f'Language prefix {link} does not exist')
                 return False
-            if link.resolve(strict=False) != expected:
-                logger.error(
-                    f'LANGUAGE PREFIX {link} does not point to {site_root}'
-                )
-                return False
+
+            for target in site_root.iterdir():
+                if target.name in prefixes:
+                    continue
+                alias = link / target.name
+                if not alias.exists():
+                    logger.debug(
+                        f'Language prefix route {alias} does not exist'
+                    )
+                    return False
         return True
 
     @staticmethod

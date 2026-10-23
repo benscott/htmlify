@@ -203,6 +203,11 @@ class PageTask(BaseTask):
         if not species_vid and not is_facet_page:
             exposed_view_count = staticize_exposed_views(soup, self.url)
 
+        # CAPTCHA challenges cannot work in a static archive. Remove them
+        # before asset processing so language-prefixed runtime image routes
+        # such as /es/image_captcha do not create a misleading /es tree.
+        self.remove_captcha(soup)
+
         self.process_css_style_urls(soup)
         self.process_css(soup)
         self.process_js(soup)
@@ -287,6 +292,11 @@ class PageTask(BaseTask):
     def remove_comment_form(self, soup):
         if comment_form := soup.find('div', id='comments'):
             comment_form.decompose()    
+
+    @staticmethod
+    def remove_captcha(soup):
+        for captcha in soup.select('.captcha, .captcha-admin-links'):
+            captcha.decompose()
 
     def remove_feeds(self, soup):
         if feeds_div := soup.find(class_='feed-icon'):

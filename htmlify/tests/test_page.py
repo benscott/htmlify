@@ -13,6 +13,28 @@ from htmlify.tasks.page import PageTask, STATIC_ASSET_VERSION
 
 class TestPageContent(unittest.TestCase):
 
+    def test_removes_captcha_before_runtime_images_are_archived(self):
+        soup = BeautifulSoup(
+            '''
+            <html><body>
+              <form>
+                <div class="captcha">
+                  <img src="/es/image_captcha/12345.png">
+                  <input name="captcha_response">
+                </div>
+                <p>Form content</p>
+              </form>
+            </body></html>
+            ''',
+            'html.parser',
+        )
+
+        PageTask.remove_captcha(soup)
+
+        self.assertIsNone(soup.select_one('.captcha'))
+        self.assertIsNone(soup.find('img'))
+        self.assertIn('Form content', soup.get_text())
+
     def test_old_exposed_view_page_is_revisited(self):
         with tempfile.TemporaryDirectory() as directory:
             task = PageTask(

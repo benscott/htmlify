@@ -205,6 +205,83 @@ class TestSiteTask(unittest.TestCase):
             )
             self.assertTrue(aliases_complete)
 
+    def test_language_prefix_preserves_an_existing_directory(self):
+        with TemporaryDirectory() as temporary_directory:
+            sites_root = Path(temporary_directory)
+            site_root = sites_root / 'aipa.myspecies.info'
+            blog = site_root / 'blog' / 'index.html'
+            blog.parent.mkdir(parents=True)
+            blog.write_text('Blogs', encoding='utf-8')
+            spanish_root = site_root / 'es'
+            spanish_root.mkdir()
+            spanish_index = spanish_root / 'index.html'
+            spanish_index.write_text('Spanish homepage', encoding='utf-8')
+
+            with patch('htmlify.tasks.site.SITES_DIR', sites_root):
+                task = SiteTask(
+                    domain='aipa.myspecies.info',
+                    platform_path='/tmp/scratchpads',
+                )
+                with patch.object(
+                    task,
+                    'language_prefixes',
+                    return_value=['en', 'es'],
+                ):
+                    task.create_language_prefix_aliases()
+                    aliases_complete = (
+                        task.language_prefix_aliases_complete()
+                    )
+
+            self.assertTrue((site_root / 'en').is_symlink())
+            self.assertTrue(spanish_root.is_dir())
+            self.assertFalse(spanish_root.is_symlink())
+            self.assertEqual(
+                spanish_index.read_text(encoding='utf-8'),
+                'Spanish homepage',
+            )
+            self.assertTrue((spanish_root / 'blog').is_symlink())
+            self.assertEqual(
+                (spanish_root / 'blog' / 'index.html').read_text(
+                    encoding='utf-8'
+                ),
+                'Blogs',
+            )
+            self.assertTrue(aliases_complete)
+
+    def test_runtime_only_language_directory_becomes_root_alias(self):
+        with TemporaryDirectory() as temporary_directory:
+            sites_root = Path(temporary_directory)
+            site_root = sites_root / 'aipa.myspecies.info'
+            blog = site_root / 'blog' / 'index.html'
+            blog.parent.mkdir(parents=True)
+            blog.write_text('Blogs', encoding='utf-8')
+            captcha = site_root / 'es' / 'image_captcha' / '12345.png'
+            captcha.parent.mkdir(parents=True)
+            captcha.write_bytes(b'generated challenge')
+
+            with patch('htmlify.tasks.site.SITES_DIR', sites_root):
+                task = SiteTask(
+                    domain='aipa.myspecies.info',
+                    platform_path='/tmp/scratchpads',
+                )
+                with patch.object(
+                    task,
+                    'language_prefixes',
+                    return_value=['es'],
+                ):
+                    task.create_language_prefix_aliases()
+
+            language_root = site_root / 'es'
+            self.assertTrue(language_root.is_symlink())
+            self.assertEqual(language_root.resolve(), site_root.resolve())
+            self.assertFalse((site_root / 'image_captcha').exists())
+            self.assertEqual(
+                (language_root / 'blog' / 'index.html').read_text(
+                    encoding='utf-8'
+                ),
+                'Blogs',
+            )
+
     def test_language_prefixes_come_from_enabled_drupal_languages(self):
         task = SiteTask(
             domain='aipa.myspecies.info',
