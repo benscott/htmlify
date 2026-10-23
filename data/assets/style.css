@@ -4,6 +4,14 @@
     cursor: default!important;
 }
 
+.htmlify-archive-notice {
+    background: #f4f4f4;
+    border-left: 4px solid #777;
+    color: #444;
+    margin: 1em 0;
+    padding: 0.75em 1em;
+}
+
 .htmlify-facet-controls {
     background: #f4f4f4;
     border: 1px solid #d6d6d6;

@@ -427,6 +427,107 @@ class TestPageContent(unittest.TestCase):
             '3',
         )
 
+    def test_login_prompt_becomes_visible_archive_notice(self):
+        task = PageTask(
+            url='https://aipa.myspecies.info/es/forum/2497',
+            output_dir='/tmp/site',
+        )
+        soup = BeautifulSoup(
+            '''
+            <html><body>
+              <p><a href="/es/user/login/destination/forum">Log in</a>
+                to post new content in the forum.</p>
+            </body></html>
+            ''',
+            'html.parser',
+        )
+
+        task.process_links(soup)
+
+        notice = soup.select_one('.htmlify-archive-notice[role="note"]')
+        self.assertIsNotNone(notice)
+        self.assertEqual(
+            notice.get_text(' ', strip=True),
+            'Archived site: Posting and login are no longer available.',
+        )
+        self.assertEqual(soup.find_all('a'), [])
+
+    def test_standalone_auth_actions_are_removed(self):
+        task = PageTask(
+            url='https://aipa.myspecies.info/es/forum',
+            output_dir='/tmp/site',
+        )
+        soup = BeautifulSoup(
+            '''
+            <html><body><nav><ul>
+              <li><a href="/es/user/login">Log in</a></li>
+              <li><a href="/user/register">Create new account</a></li>
+              <li><a href="/es/user/password">Request new password</a></li>
+            </ul></nav></body></html>
+            ''',
+            'html.parser',
+        )
+
+        task.process_links(soup)
+
+        self.assertEqual(soup.find_all('a'), [])
+        self.assertEqual(soup.find_all('li'), [])
+
+    def test_embedded_auth_text_is_retained_and_external_link_is_untouched(self):
+        task = PageTask(
+            url='https://aipa.myspecies.info/es/forum',
+            output_dir='/tmp/site',
+        )
+        soup = BeautifulSoup(
+            '''
+            <html><body>
+              <div>Account access: <a href="/es/user/login">Log in</a>.</div>
+              <a href="https://accounts.example.org/login">Partner login</a>
+            </body></html>
+            ''',
+            'html.parser',
+        )
+
+        task.process_links(soup)
+
+        self.assertIn('Account access: Log in', soup.get_text(' ', strip=True))
+        self.assertEqual(
+            [link['href'] for link in soup.find_all('a')],
+            ['https://accounts.example.org/login'],
+        )
+
+    def test_page_with_internal_authentication_link_is_incomplete(self):
+        with tempfile.TemporaryDirectory() as directory:
+            task = PageTask(
+                url='https://aipa.myspecies.info/es/forum/2497',
+                output_dir=Path(directory),
+            )
+            output = Path(task.output().path)
+            output.parent.mkdir(parents=True)
+            output.write_text(
+                '<html data-htmlify-page-version="1" '
+                'data-htmlify-domain="aipa.myspecies.info"><body>'
+                '<a href="/es/user/login/destination/forum">Log in</a>'
+                '</body></html>',
+                encoding='utf-8',
+            )
+
+            with (
+                patch(
+                    'htmlify.tasks.page.configured_facet_definitions',
+                    return_value=[],
+                ),
+                patch(
+                    'htmlify.tasks.page.is_configured_facet_page',
+                    return_value=False,
+                ),
+            ):
+                self.assertFalse(task.complete())
+                self.assertEqual(
+                    task._last_incomplete_reason,
+                    'authentication link remains',
+                )
+
     def test_skipped_user_profile_is_revisited(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

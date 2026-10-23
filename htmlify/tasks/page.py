@@ -77,7 +77,7 @@ from htmlify.taxonomy import (
 SPECIES_PAGE_VERSION = '5'
 SKIPPED_PAGE_VERSION = '3'
 FACET_PAGE_VERSION = '12'
-STATIC_ASSET_VERSION = '10'
+STATIC_ASSET_VERSION = '11'
 PAGE_ARCHIVE_VERSION = '1'
 USER_LINK_VERSION = '3'
 
@@ -485,6 +485,15 @@ class PageTask(BaseTask):
             and user_link_version.group(1) != USER_LINK_VERSION
         ):
             return self._incomplete('user-link processing version is stale')
+        if any(
+            self._is_authentication_href(href)
+            for href in re.findall(
+                r'href\s*=\s*["\']([^"\']+)["\']',
+                html,
+                flags=re.IGNORECASE,
+            )
+        ):
+            return self._incomplete('authentication link remains')
         if 'block-facetapi' in html and not self._is_search_page():
             return self._incomplete('Facet API blocks have not been processed')
         if (
@@ -1068,6 +1077,8 @@ class PageTask(BaseTask):
 
     def process_links(self, soup):
 
+        self.replace_authentication_links(soup)
+
         linked_user_ids = {
             user_id
             for link in soup.find_all('a', href=True)
@@ -1125,6 +1136,73 @@ class PageTask(BaseTask):
             return None
         match = re.fullmatch(r'/user/(\d+)/?', urlparse(href).path)
         return int(match.group(1)) if match else None
+
+    def _is_authentication_href(self, href):
+        """Return whether an internal link points to a Drupal auth action."""
+        if not is_internal_url(href, self.domain):
+            return False
+        return bool(re.fullmatch(
+            r'/(?:[a-z]{2}(?:[-_][a-z]{2})?/)?'
+            r'user/(?:login|register|password|logout)(?:/.*)?',
+            urlparse(href).path,
+            flags=re.IGNORECASE,
+        ))
+
+    @staticmethod
+    def _authentication_notice(soup):
+        notice = soup.new_tag(
+            'p',
+            attrs={
+                'class': 'htmlify-archive-notice',
+                'role': 'note',
+            },
+        )
+        lead = soup.new_tag('strong')
+        lead.string = 'Archived site:'
+        notice.append(lead)
+        notice.append(' Posting and login are no longer available.')
+        return notice
+
+    def replace_authentication_links(self, soup):
+        """Remove unusable login actions while retaining useful page text."""
+        prompt_pattern = re.compile(
+            r'\b(post|posting|comment|reply|new content|subscribe|create|edit|'
+            r'publicar|coment|responder|contenido|suscrib|crear|editar)\w*\b',
+            flags=re.IGNORECASE,
+        )
+
+        auth_links = [
+            link
+            for link in soup.find_all('a', href=True)
+            if self._is_authentication_href(link.get('href'))
+        ]
+        replaced_containers = set()
+        for link in auth_links:
+            if link.parent is None:
+                continue
+
+            container = link.find_parent(['p', 'li'])
+            if (
+                container is not None
+                and id(container) not in replaced_containers
+                and prompt_pattern.search(container.get_text(' ', strip=True))
+            ):
+                replaced_containers.add(id(container))
+                container.replace_with(self._authentication_notice(soup))
+                continue
+
+            parent = link.parent
+            if (
+                parent.name in {'li', 'p'}
+                and parent.get_text(' ', strip=True)
+                == link.get_text(' ', strip=True)
+            ):
+                parent.decompose()
+                continue
+
+            # A name or sentence surrounding the link may still be useful in
+            # the archive, so preserve its text without implying it works.
+            link.unwrap()
 
     @classmethod
     def _biblio_facet_href(cls, href):
