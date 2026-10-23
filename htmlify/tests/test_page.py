@@ -908,6 +908,10 @@ class TestSpeciesPage(unittest.TestCase):
         with (
             patch('htmlify.tasks.page.get_soup', return_value=specimens),
             patch(
+                'htmlify.tasks.page.PageTask._specimen_records',
+                return_value=None,
+            ),
+            patch(
                 'htmlify.tasks.page.request_json',
                 return_value={'data': [{'Title': 'Specimen one', 'ID': '42'}]},
             ) as request_grid,
@@ -924,6 +928,76 @@ class TestSpeciesPage(unittest.TestCase):
             'https://abrusinthailand.myspecies.info/'
             'slickgrid/get/data/specimen_records/0/100'
         )
+
+    def test_builds_species_specimen_list_from_database(self):
+        task = PageTask(
+            url='https://africanpalms.myspecies.info/taxonomy/term/74',
+            output_dir=Path('/tmp/africanpalms-species-test'),
+        )
+        soup = BeautifulSoup(
+            '''
+            <html><body><div id="region-content"><div class="region-content-inner">
+              <div class="tabs"><ul class="tabs">
+                <li><a href="/taxonomy/term/74">Description</a></li>
+                <li><a href="/taxonomy/term/74/specimens">Specimens</a></li>
+              </ul></div>
+              <article>A description</article>
+            </div></div></body></html>
+            ''',
+            'html.parser',
+        )
+        specimens = BeautifulSoup(
+            '''
+            <html><head><script>
+              slickgrid = new Slickgrid(
+                '#slickgrid', 'species_specimen_observation', 'block'
+              );
+            </script></head><body>
+              <div id="region-content"><div class="region-content-inner">
+                <div class="tabs"><ul class="tabs"></ul></div>
+                <div class="slickgrid-wrapper"><div id="slickgrid"></div></div>
+                <div class="loading-indicator">Loading...</div>
+              </div></div>
+            </body></html>
+            ''',
+            'html.parser',
+        )
+
+        def fetch(_domain, query):
+            if 'FROM node n' in query:
+                self.assertIn("n.type = 'specimen_observation'", query)
+                self.assertIn('ti.tid = 74', query)
+                return [(181, 'AAU Herbarium MG01')]
+            if 'FROM url_alias' in query:
+                return [('node/181', 'content/aau-herbarium-mg01')]
+            self.fail(f'Unexpected specimen query: {query}')
+
+        with (
+            patch('htmlify.tasks.page.get_soup', return_value=specimens),
+            patch('htmlify.tasks.page.db_manager.fetch', side_effect=fetch),
+            patch('htmlify.tasks.page.request_json') as request_grid,
+        ):
+            task.species_page(soup, 74, 3)
+
+        specimen_panel = soup.select_one(
+            '.htmlify-species-panel[data-species-tab="specimens"]'
+        )
+        self.assertIsNotNone(specimen_panel)
+        specimen_list = specimen_panel.select_one(
+            '.htmlify-specimen-list[data-htmlify-specimens-version="1"]'
+        )
+        self.assertIsNotNone(specimen_list)
+        self.assertEqual(
+            specimen_list.a['href'],
+            '/content/aau-herbarium-mg01',
+        )
+        self.assertEqual(
+            specimen_list.a.get_text(strip=True),
+            'AAU Herbarium MG01',
+        )
+        self.assertIsNone(specimen_panel.select_one('.slickgrid-wrapper'))
+        self.assertIsNone(specimen_panel.select_one('.loading-indicator'))
+        request_grid.assert_not_called()
 
     def test_combines_rendered_tabs_and_replaces_tinytax(self):
         task = PageTask(

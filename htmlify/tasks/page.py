@@ -74,7 +74,7 @@ from htmlify.taxonomy import (
 )
 
 
-SPECIES_PAGE_VERSION = '5'
+SPECIES_PAGE_VERSION = '6'
 SKIPPED_PAGE_VERSION = '3'
 FACET_PAGE_VERSION = '12'
 STATIC_ASSET_VERSION = '11'
@@ -666,6 +666,105 @@ class PageTask(BaseTask):
             if found_tabs:
                 child.extract()
 
+    def _specimen_records(self, tid):
+        """Return published specimen nodes assigned to a taxonomy term."""
+        try:
+            rows = db_manager.fetch(
+                self.domain,
+                'SELECT DISTINCT n.nid, n.title '
+                'FROM node n '
+                'INNER JOIN taxonomy_index ti ON ti.nid = n.nid '
+                "WHERE n.status = 1 AND n.type = 'specimen_observation' "
+                f'AND ti.tid = {int(tid)} '
+                'ORDER BY n.title, n.nid',
+            )
+        except Exception as error:
+            logger.warning(
+                'Could not read specimens for taxonomy term %s on %s: %s',
+                tid,
+                self.domain,
+                error,
+            )
+            return None
+
+        records = [
+            {
+                'nid': int(nid),
+                'title': str(title or f'Specimen {nid}'),
+                'path': f'/node/{int(nid)}',
+            }
+            for nid, title in rows
+        ]
+        if not records:
+            return records
+
+        sources = ','.join(
+            f"'node/{record['nid']}'" for record in records
+        )
+        try:
+            aliases = db_manager.fetch(
+                self.domain,
+                'SELECT source, alias FROM url_alias '
+                f'WHERE source IN ({sources}) '
+                'ORDER BY source, alias',
+            )
+        except Exception as error:
+            logger.warning(
+                'Could not read specimen aliases for %s: %s',
+                self.domain,
+                error,
+            )
+            aliases = []
+
+        aliases_by_source = {}
+        for source, alias in aliases:
+            if not source or not alias:
+                continue
+            aliases_by_source.setdefault(str(source), []).append(str(alias))
+        for record in records:
+            options = aliases_by_source.get(f"node/{record['nid']}", [])
+            if options:
+                alias = min(options, key=lambda value: (len(value), value))
+                record['path'] = f'/{alias.lstrip("/")}'
+        return records
+
+    def _staticize_specimen_tab(self, soup, tid):
+        """Replace the specimen SlickGrid with a database-backed list."""
+        records = self._specimen_records(tid)
+        if records is None:
+            return False
+
+        wrappers = list(soup.select('.slickgrid-wrapper'))
+        specimen_list = soup.new_tag('div')
+        specimen_list['class'] = ['htmlify-specimen-list']
+        specimen_list['data-htmlify-specimens-version'] = '1'
+        if records:
+            items = soup.new_tag('ul')
+            for record in records:
+                item = soup.new_tag('li')
+                link = soup.new_tag('a', href=record['path'])
+                link.string = record['title']
+                item.append(link)
+                items.append(item)
+            specimen_list.append(items)
+
+        if wrappers:
+            wrappers[0].replace_with(specimen_list)
+            for wrapper in wrappers[1:]:
+                wrapper.decompose()
+        elif records:
+            destination = (
+                soup.select_one('#block-system-main .content')
+                or soup.select_one('#region-content .region-content-inner')
+                or soup.select_one('#region-content')
+            )
+            if destination:
+                destination.append(specimen_list)
+
+        for loading in soup.select('.loading-indicator'):
+            loading.decompose()
+        return True
+
     def _prune_empty_species_panels(self, soup):
         """Remove empty tabs after all page and asset processing is finished."""
         tabs_container = soup.select_one('.htmlify-species-tabs')
@@ -779,11 +878,24 @@ class PageTask(BaseTask):
                     )
                     tab_soup = None
 
+            # Specimen grids are populated at runtime and can render empty on
+            # otherwise healthy sites. Build that tab from Drupal's taxonomy
+            # assignments; retain the live endpoint as a fallback only when
+            # the database cannot be read.
+            specimen_tab_static = bool(
+                tab_soup
+                and tab['slug'] == 'specimens'
+                and self._staticize_specimen_tab(tab_soup, tid)
+            )
+
             # Drupal normally places the SlickGrid initializer outside the
-            # tab's main content region. Expand the grid before copying that
-            # region into the combined static species page, otherwise the
-            # wrapper is copied without the script needed to identify it.
-            if tab_soup and self._is_slickgrid(tab_soup):
+            # tab's main content region. Expand other grids before copying the
+            # region, or use this as the specimen fallback after a DB error.
+            if (
+                tab_soup
+                and not specimen_tab_static
+                and self._is_slickgrid(tab_soup)
+            ):
                 tab_soup = self._load_slickgrid(tab_soup)
             if tab_soup:
                 self._remove_obsolete_species_blocks(tab_soup)
