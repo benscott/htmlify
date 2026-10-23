@@ -35,6 +35,77 @@ class TestPageContent(unittest.TestCase):
         self.assertIsNone(soup.find('img'))
         self.assertIn('Form content', soup.get_text())
 
+    def test_removes_clustrmaps_widget_without_removing_other_content(self):
+        soup = BeautifulSoup(
+            '''
+            <section class="block">
+              <p><a href="http://www4.ClustrMaps.com/counter/maps.php">
+                <img src="http://www4.clustrmaps.com/counter/index2.php">
+                Locations of visitors to this page
+              </a></p>
+              <p>Useful sidebar content</p>
+            </section>
+            ''',
+            'html.parser',
+        )
+
+        PageTask.remove_clustrmaps(soup)
+
+        self.assertNotIn('clustrmaps.com', str(soup).lower())
+        self.assertIn('Useful sidebar content', soup.get_text())
+
+    def test_replaces_nonbiological_tinytax_with_static_full_tree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            task = PageTask(
+                url=(
+                    'https://aipa.myspecies.info/'
+                    'nontaxonomy/term/2498'
+                ),
+                output_dir=Path(directory),
+            )
+            soup = BeautifulSoup(
+                '''
+                <html><body class="page-nontaxonomy-term-2498">
+                  <section class="block block-tinytax" id="block-tinytax-198">
+                    <h2>Insecta</h2>
+                    <div class="content"><div class="tinytax">
+                      <img class="click plus" alt="Open" src="plus.gif">
+                      <a href="/es/nontaxonomy/term/2498">Diptera</a>
+                    </div></div>
+                  </section>
+                </body></html>
+                ''',
+                'html.parser',
+            )
+
+            with (
+                patch(
+                    'htmlify.tasks.page.vocabulary_for_term',
+                    return_value=198,
+                ),
+                patch('htmlify.tasks.page.write_taxonomy_index') as write_index,
+            ):
+                task.process_tinytax(soup)
+
+            tree = soup.select_one('.htmlify-taxonomy-tree')
+            self.assertIsNotNone(tree)
+            self.assertIsNone(soup.select_one('.block-tinytax'))
+            self.assertEqual(tree['data-current-tid'], '2498')
+            self.assertEqual(tree['data-index-url'], '/assets/taxonomy/198.json')
+            self.assertEqual(
+                tree['data-term-path'],
+                '/es/nontaxonomy/term',
+            )
+            self.assertIsNotNone(tree.select_one('.htmlify-taxonomy-search'))
+            self.assertIsNone(tree.select_one('img.click'))
+            self.assertIsNotNone(
+                soup.find(
+                    'script',
+                    src=f'/assets/species-page.js?v={STATIC_ASSET_VERSION}',
+                )
+            )
+            write_index.assert_called_once()
+
     def test_old_exposed_view_page_is_revisited(self):
         with tempfile.TemporaryDirectory() as directory:
             task = PageTask(

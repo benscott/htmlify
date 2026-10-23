@@ -258,6 +258,26 @@
     margin: 0.25em 0;
 }
 
+.htmlify-taxonomy-tree details > summary {
+    cursor: pointer;
+    list-style: none;
+}
+
+.htmlify-taxonomy-tree details > summary::-webkit-details-marker {
+    display: none;
+}
+
+.htmlify-taxonomy-tree details > summary::before {
+    content: "+";
+    display: inline-block;
+    font-weight: bold;
+    width: 1em;
+}
+
+.htmlify-taxonomy-tree details[open] > summary::before {
+    content: "\2212";
+}
+
 .htmlify-taxonomy-tree summary {
     cursor: pointer;
 }

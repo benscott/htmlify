@@ -52,6 +52,9 @@
     var queryInput = root.querySelector('#htmlify-taxonomy-query');
     var clearButton = root.querySelector('.htmlify-taxonomy-clear');
     var current = String(root.getAttribute('data-current-tid') || '');
+    var termPath = String(
+      root.getAttribute('data-term-path') || '/taxonomy/term'
+    ).replace(/\/$/, '');
     var taxonomy = null;
 
     function clean(value) {
@@ -125,7 +128,7 @@
           if (lineage[id]) return;
           var item = document.createElement('li');
           var link = document.createElement('a');
-          link.href = '/taxonomy/term/' + id;
+          link.href = termPath + '/' + id;
           link.textContent = node.name;
           if (id === current) {
             link.className = 'active';

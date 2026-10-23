@@ -69,6 +69,7 @@ from htmlify.exposed_views import (
 from htmlify.taxonomy import (
     biological_vid_for_term,
     taxonomy_asset_url,
+    vocabulary_for_term,
     write_taxonomy_index,
 )
 
@@ -76,7 +77,7 @@ from htmlify.taxonomy import (
 SPECIES_PAGE_VERSION = '5'
 SKIPPED_PAGE_VERSION = '3'
 FACET_PAGE_VERSION = '11'
-STATIC_ASSET_VERSION = '9'
+STATIC_ASSET_VERSION = '10'
 PAGE_ARCHIVE_VERSION = '1'
 USER_LINK_VERSION = '3'
 
@@ -207,6 +208,7 @@ class PageTask(BaseTask):
         # before asset processing so language-prefixed runtime image routes
         # such as /es/image_captcha do not create a misleading /es tree.
         self.remove_captcha(soup)
+        self.remove_clustrmaps(soup)
 
         self.process_css_style_urls(soup)
         self.process_css(soup)
@@ -297,6 +299,26 @@ class PageTask(BaseTask):
     def remove_captcha(soup):
         for captcha in soup.select('.captcha, .captcha-admin-links'):
             captcha.decompose()
+
+    @staticmethod
+    def remove_clustrmaps(soup):
+        """Remove the retired external visitor-map widget."""
+        widgets = [
+            tag
+            for tag in soup.find_all(True)
+            if any(
+                'clustrmaps.com' in str(tag.get(attribute, '')).lower()
+                for attribute in ('href', 'src')
+            )
+        ]
+        for widget in widgets:
+            if widget.parent is None:
+                continue
+            paragraph = widget.find_parent('p')
+            if paragraph:
+                paragraph.decompose()
+            else:
+                widget.decompose()
 
     def remove_feeds(self, soup):
         if feeds_div := soup.find(class_='feed-icon'):
@@ -484,6 +506,20 @@ class PageTask(BaseTask):
             index_path = Path(self.output_dir) / match.group(1).lstrip('/')
             if not index_path.exists():
                 return self._incomplete('facet JSON index is missing')
+        if 'clustrmaps.com' in html.lower():
+            return self._incomplete('retired ClustrMaps widget remains')
+        if 'block-tinytax' in html:
+            return self._incomplete('live TinyTax tree remains')
+        if 'htmlify-taxonomy-tree' in html:
+            match = re.search(r'data-index-url=["\']([^"\']+)["\']', html)
+            if not match:
+                return self._incomplete('taxonomy tree has no JSON index URL')
+            index_path = Path(self.output_dir) / match.group(1).lstrip('/')
+            if not index_path.exists():
+                return self._incomplete('taxonomy JSON index is missing')
+            script = f'/assets/species-page.js?v={STATIC_ASSET_VERSION}'
+            if script not in html:
+                return self._incomplete('taxonomy tree script is stale')
         self._last_incomplete_reason = None
         return True
 
@@ -796,10 +832,18 @@ class PageTask(BaseTask):
             if soup.body:
                 soup.body.append(script)
 
-    def _replace_taxonomy_tree(self, soup, tid, vid):
-        block = soup.select_one('section.block-tinytax')
+    def _replace_taxonomy_tree(self, soup, tid, vid, term_path=None):
+        block = soup.select_one(
+            'section.block-tinytax, section.htmlify-taxonomy-tree'
+        )
         if not block:
             return
+
+        term_path = (
+            term_path
+            or block.get('data-term-path')
+            or self._tinytax_term_path(block)
+        )
 
         destination = (
             Path(self.output_dir)
@@ -816,6 +860,7 @@ class PageTask(BaseTask):
         block['class'] = classes
         block['data-index-url'] = taxonomy_asset_url(vid)
         block['data-current-tid'] = str(tid)
+        block['data-term-path'] = term_path
 
         content = block.find(class_='content')
         if not content:
@@ -852,6 +897,13 @@ class PageTask(BaseTask):
         tree['class'] = ['htmlify-taxonomy-list']
         content.extend([form, status, tree])
 
+        taxonomy_script = (
+            f'/assets/species-page.js?v={STATIC_ASSET_VERSION}'
+        )
+        if soup.body and not soup.find('script', src=taxonomy_script):
+            script = soup.new_tag('script', src=taxonomy_script, defer=True)
+            soup.body.append(script)
+
     def _write_species_tab_redirects(self, soup, tid):
         for link in soup.select('.htmlify-species-tabs a[data-species-tab]'):
             slug = link['data-species-tab']
@@ -873,94 +925,56 @@ class PageTask(BaseTask):
         return bool(soup.find('section', {"class": "block-tinytax"})) 
     
     def process_tinytax(self, soup):
+        logger.debug(f'Tiny tax detected {self.url} - making it static...')
 
-        logger.debug(f'Tiny tax detected {self.url} - expanding...')
+        block = soup.select_one('section.block-tinytax')
+        if not block:
+            return
 
-        tiny_tax_block = soup.find('section', {"class": "block-tinytax"})
+        tid = self._tinytax_term_id(soup)
+        vid = vocabulary_for_term(self.domain, tid) if tid else None
+        if not tid or not vid:
+            logger.warning(
+                'Could not identify TinyTax vocabulary for %s',
+                self.url,
+            )
+            return
 
-        # Extract the class attribute
-        body_class = soup.body.get('class', [])
-        # Join the class list into a single string (if it's a list)
-        body_class_str = ' '.join(body_class)
+        self._replace_taxonomy_tree(
+            soup,
+            tid,
+            vid,
+            term_path=self._tinytax_term_path(block),
+        )
 
-        # Regular expression to extract the number after 'page-taxonomy-term-'
-        pattern = r'page-(?:taxonomy|nontaxonomy|simpletaxonomy)-term-(\d+)'
+    def _tinytax_term_id(self, soup):
+        match = re.search(
+            r'/(?:taxonomy|nontaxonomy|simpletaxonomy)/term/(\d+)',
+            self._url.path or '',
+        )
+        if match:
+            return int(match.group(1))
 
-        # Search for the pattern in the class attribute string
-        match = re.search(pattern, body_class_str)        
+        body_classes = ' '.join(soup.body.get('class', [])) if soup.body else ''
+        match = re.search(
+            r'page-(?:taxonomy|nontaxonomy|simpletaxonomy)-term-(\d+)',
+            body_classes,
+        )
+        return int(match.group(1)) if match else None
 
-        tid = match.group(1)
+    def _tinytax_term_path(self, block):
+        pattern = re.compile(
+            r'^(.*?/(?:taxonomy|nontaxonomy|simpletaxonomy)/term)/\d+'
+        )
+        for link in block.find_all('a', href=True):
+            path = urlparse(link['href']).path.rstrip('/')
+            if match := pattern.match(path):
+                return match.group(1)
 
-        tiny_tax_block = soup.find('section', {"class": "block-tinytax"})
-        block_id = tiny_tax_block.get('id').replace('block-', '')
-
-        tinytax = self.get_tinytax(block_id, tid)
-        tinytax_soup = BeautifulSoup(tinytax, 'html.parser')
-        # Find all <a> elements with the classes tinytax-bold and active
-        active_a = tinytax_soup.find_all('a', class_='tinytax-bold')
-
-        # Remove the classes from each found anchor
-        for a in active_a:
-            a['class'].remove('tinytax-bold')
-            if 'active' in a.get('class', []):
-                a['class'].remove('active')            
-
-        active_element = tinytax_soup.find(id=f'tinytax-{tid}') 
-        active_element.find('a')['class'] = ['active', 'tinytax-bold']           
-        tiny_tax_block.replace_with(tinytax_soup)   
-
-    def get_tinytax(self, block_id, tid):
-
-        if child_tid := self.get_child_tid(tid):
-            return self.get_tinytax_block(block_id, child_tid)
-        
-        return self.get_tinytax_block(block_id, tid)
-
-    def get_tinytax_block(self, block_id, tid):
-
-        query_dict = {
-            'blocks': block_id,
-            'path': f'taxonomy/term/{tid}'
-        }
-        query = urlencode(query_dict)        
-
-        child_url = urlunparse((
-            self._url.scheme, 
-            self._url.domain, 
-            f'ajaxblocks', 
-            '', 
-            query,
-            ''
-        ))     
-
-        json = request_json(child_url) 
-        return json.get(block_id).get('content')
-    
-    def get_child_tid(self, tid):
-        sql = f"""
-            SELECT DISTINCT td.tid
-            FROM taxonomy_term_data td
-            INNER JOIN taxonomy_term_hierarchy th ON td.tid = th.tid
-            WHERE th.parent = {tid}
-        """     
-
-        result = db_manager.fetch(self.domain, sql)
-        for child_tid, in result:
-            child_url = urlunparse((
-                self._url.scheme, 
-                self._url.domain, 
-                f'taxonomy/term/{child_tid}', 
-                '', 
-                '',
-                ''
-            )) 
-
-            try:
-                get_soup(child_url)
-            except requests.exceptions.HTTPError:    
-                continue
-            else:
-                return child_tid             
+        path = self._url.path or ''
+        if match := pattern.match(path):
+            return match.group(1)
+        return '/taxonomy/term'
     
     def _is_slickgrid(self, soup):
         return bool(soup.find('div', {"class": "slickgrid-wrapper"}))         

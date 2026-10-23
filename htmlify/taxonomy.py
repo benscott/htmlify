@@ -48,6 +48,23 @@ def biological_vid_for_term(domain, tid):
     return get_biological_terms(domain).get(int(tid))
 
 
+@lru_cache(maxsize=None)
+def get_term_vocabularies(domain):
+    """Map every term ID to its vocabulary ID for one site."""
+    rows = db_manager.fetch(
+        domain,
+        '''
+            SELECT tid, vid
+            FROM taxonomy_term_data
+        ''',
+    )
+    return {int(tid): int(vid) for tid, vid in rows}
+
+
+def vocabulary_for_term(domain, tid):
+    return get_term_vocabularies(domain).get(int(tid))
+
+
 def taxonomy_asset_url(vid):
     return f'/assets/taxonomy/{int(vid)}.json'
 
