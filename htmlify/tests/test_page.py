@@ -180,7 +180,7 @@ class TestPageContent(unittest.TestCase):
                 '<html data-htmlify-page-version="1" '
                 'data-htmlify-domain="aipa.myspecies.info"><body>'
                 '<section id="block-tinytax-198" '
-                'class="block htmlify-taxonomy-tree" '
+                'class="block block-tinytax-198 htmlify-taxonomy-tree" '
                 'data-index-url="/assets/taxonomy/198.json"></section>'
                 f'<script src="/assets/species-page.js?v={STATIC_ASSET_VERSION}">'
                 '</script></body></html>',
@@ -200,8 +200,8 @@ class TestPageContent(unittest.TestCase):
                 self.assertTrue(task.complete())
                 output.write_text(
                     output.read_text(encoding='utf-8').replace(
-                        'class="block htmlify-taxonomy-tree"',
-                        'class="block block-tinytax"',
+                        'class="block block-tinytax-198 htmlify-taxonomy-tree"',
+                        'class="block block-tinytax block-tinytax-198"',
                     ),
                     encoding='utf-8',
                 )

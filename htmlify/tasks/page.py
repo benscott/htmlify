@@ -508,7 +508,7 @@ class PageTask(BaseTask):
                 return self._incomplete('facet JSON index is missing')
         if 'clustrmaps.com' in html.lower():
             return self._incomplete('retired ClustrMaps widget remains')
-        if re.search(r'class=["\'][^"\']*\bblock-tinytax\b', html):
+        if self._html_has_class(html, 'block-tinytax'):
             return self._incomplete('live TinyTax tree remains')
         if 'htmlify-taxonomy-tree' in html:
             match = re.search(r'data-index-url=["\']([^"\']+)["\']', html)
@@ -522,6 +522,18 @@ class PageTask(BaseTask):
                 return self._incomplete('taxonomy tree script is stale')
         self._last_incomplete_reason = None
         return True
+
+    @staticmethod
+    def _html_has_class(html, class_name):
+        """Return whether serialized HTML contains an exact class token."""
+        return any(
+            class_name in match.group(1).split()
+            for match in re.finditer(
+                r'class=["\']([^"\']*)["\']',
+                html,
+                flags=re.IGNORECASE,
+            )
+        )
 
     def _incomplete(self, reason):
         self._last_incomplete_reason = reason
