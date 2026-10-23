@@ -168,6 +168,57 @@ class TestSiteTask(unittest.TestCase):
                 self.assertTrue((site_root / 'current-page').is_symlink())
                 self.assertTrue(task.site_aliases_complete(sitemap_paths))
 
+    def test_language_prefix_aliases_the_complete_static_tree(self):
+        with TemporaryDirectory() as temporary_directory:
+            sites_root = Path(temporary_directory)
+            site_root = sites_root / 'aipa.myspecies.info'
+            blog = site_root / 'blog' / 'index.html'
+            blog.parent.mkdir(parents=True)
+            blog.write_text('Blogs', encoding='utf-8')
+
+            with patch('htmlify.tasks.site.SITES_DIR', sites_root):
+                task = SiteTask(
+                    domain='aipa.myspecies.info',
+                    platform_path='/tmp/scratchpads',
+                )
+                with patch.object(
+                    task,
+                    'language_prefixes',
+                    return_value=['es'],
+                ):
+                    self.assertFalse(
+                        task.language_prefix_aliases_complete()
+                    )
+                    task.create_language_prefix_aliases()
+                    aliases_complete = (
+                        task.language_prefix_aliases_complete()
+                    )
+
+            language_root = site_root / 'es'
+            self.assertTrue(language_root.is_symlink())
+            self.assertEqual(language_root.resolve(), site_root.resolve())
+            self.assertEqual(
+                (language_root / 'blog' / 'index.html').read_text(
+                    encoding='utf-8'
+                ),
+                'Blogs',
+            )
+            self.assertTrue(aliases_complete)
+
+    def test_language_prefixes_come_from_enabled_drupal_languages(self):
+        task = SiteTask(
+            domain='aipa.myspecies.info',
+            platform_path='/tmp/scratchpads',
+        )
+        with patch(
+            'htmlify.tasks.site.db_manager.fetch',
+            return_value=[('es',), ('fr',), ('../unsafe',), ('es',)],
+        ) as fetch:
+            prefixes = task.language_prefixes()
+
+        self.assertEqual(prefixes, ['es', 'fr'])
+        self.assertIn('FROM languages', fetch.call_args.args[1])
+
     def test_legacy_colorbox_pages_contain_only_the_primary_media(self):
         with TemporaryDirectory() as temporary_directory:
             sites_root = Path(temporary_directory)

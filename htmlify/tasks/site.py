@@ -360,6 +360,65 @@ class SiteTask(BaseTask):
                 target_is_directory=True,
             )
 
+    def language_prefixes(self):
+        """Return safe path prefixes for enabled Drupal languages."""
+        try:
+            rows = db_manager.fetch(
+                self.domain,
+                """
+                SELECT DISTINCT prefix
+                FROM languages
+                WHERE enabled = 1 AND prefix <> ''
+                ORDER BY prefix
+                """,
+            )
+        except mysql.connector.Error as error:
+            # The languages table is supplied by Drupal's Locale module and
+            # may not exist on monolingual sites where that module was never
+            # installed.
+            logger.debug(
+                f'Could not read language prefixes for {self.domain}: {error}'
+            )
+            return []
+
+        prefixes = []
+        for value, in rows:
+            prefix = str(value or '').strip().strip('/')
+            if not re.fullmatch(r'[A-Za-z0-9_-]+', prefix):
+                logger.warning(
+                    f'Ignoring unsafe language prefix {value!r} for '
+                    f'{self.domain}'
+                )
+                continue
+            prefixes.append(prefix)
+        return list(dict.fromkeys(prefixes))
+
+    def create_language_prefix_aliases(self):
+        """Make Drupal language-prefixed URLs resolve to the static tree."""
+        site_root = Path(self.output().path)
+        for prefix in self.language_prefixes():
+            self._ensure_symlink(
+                site_root / prefix,
+                site_root,
+                target_is_directory=True,
+            )
+
+    def language_prefix_aliases_complete(self):
+        """Return whether every configured language prefix aliases the root."""
+        site_root = Path(self.output().path)
+        expected = site_root.resolve(strict=False)
+        for prefix in self.language_prefixes():
+            link = site_root / prefix
+            if not link.is_symlink():
+                logger.error(f'LANGUAGE PREFIX {link} does not exist')
+                return False
+            if link.resolve(strict=False) != expected:
+                logger.error(
+                    f'LANGUAGE PREFIX {link} does not point to {site_root}'
+                )
+                return False
+        return True
+
     @staticmethod
     def _file_colorbox_fragment(canonical_page, file_id):
         """Build the chrome-free media fragment expected by Colorbox."""
@@ -555,6 +614,7 @@ class SiteTask(BaseTask):
         if not self.is_filtered_run:
             logger.debug('Creating site aliases')
             self.create_site_aliases(all_links)
+            self.create_language_prefix_aliases()
 
         completion_target = self.completion_output()
         Path(completion_target.path).parent.mkdir(parents=True, exist_ok=True)
@@ -628,6 +688,9 @@ class SiteTask(BaseTask):
         with SiteMapTask(domain=self.domain).output().open() as sitemap:
             sitemap_paths = yaml.full_load(sitemap) or []
         if not self.site_aliases_complete(sitemap_paths):
+            return False
+
+        if not self.language_prefix_aliases_complete():
             return False
             
         db_manager.close_connection(self.domain)
