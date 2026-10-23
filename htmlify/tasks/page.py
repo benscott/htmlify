@@ -470,12 +470,15 @@ class PageTask(BaseTask):
             html,
         ):
             return self._incomplete('legacy bibliography filter link remains')
-        if (
-            re.search(r'href=["\']/user/\d+/?["\']', html)
-            and f'data-htmlify-user-links-version="{USER_LINK_VERSION}"'
-            not in html
+        if any(
+            self._linked_user_reference(href) is not None
+            for href in re.findall(
+                r'href\s*=\s*["\']([^"\']+)["\']',
+                html,
+                flags=re.IGNORECASE,
+            )
         ):
-            return self._incomplete('user links have not been processed')
+            return self._incomplete('user profile link remains')
         user_link_version = re.search(
             r'data-htmlify-user-links-version=["\']([^"\']+)["\']',
             html,
@@ -1191,14 +1194,16 @@ class PageTask(BaseTask):
 
         self.replace_authentication_links(soup)
 
-        linked_user_ids = {
-            user_id
+        linked_user_references = {
+            user_reference
             for link in soup.find_all('a', href=True)
             if (
-                user_id := self._linked_user_id(link.get('href'))
+                user_reference := self._linked_user_reference(
+                    link.get('href')
+                )
             ) is not None
         }
-        if linked_user_ids:
+        if linked_user_references:
             if soup.html:
                 soup.html['data-htmlify-user-links-version'] = (
                     USER_LINK_VERSION
@@ -1209,8 +1214,8 @@ class PageTask(BaseTask):
             href = a.get('href')
             if href.startswith('#'):
                 continue
-            linked_user_id = self._linked_user_id(href)
-            if linked_user_id is not None:
+            linked_user_reference = self._linked_user_reference(href)
+            if linked_user_reference is not None:
                 a.unwrap()
                 continue
             if is_decommisionned_link(href):
@@ -1243,11 +1248,25 @@ class PageTask(BaseTask):
             ):
                 link['href'] = facet_href
 
-    def _linked_user_id(self, href):
+    def _linked_user_reference(self, href):
+        """Identify canonical and Pathauto-aliased user profile URLs."""
         if not is_internal_url(href, self.domain):
             return None
-        match = re.fullmatch(r'/user/(\d+)/?', urlparse(href).path)
-        return int(match.group(1)) if match else None
+        path = '/' + urlparse(href).path.lstrip('/')
+        language_prefix = r'(?:[a-z]{2}(?:[-_][a-z]{2})?/)?'
+        if match := re.fullmatch(
+            rf'/{language_prefix}user/(\d+)/?',
+            path,
+            flags=re.IGNORECASE,
+        ):
+            return f'user:{match.group(1)}'
+        if match := re.fullmatch(
+            rf'/{language_prefix}users/([^/]+)/?',
+            path,
+            flags=re.IGNORECASE,
+        ):
+            return f'users:{unquote(match.group(1))}'
+        return None
 
     def _is_authentication_href(self, href):
         """Return whether an internal link points to a Drupal auth action."""

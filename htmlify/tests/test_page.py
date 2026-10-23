@@ -411,6 +411,9 @@ class TestPageContent(unittest.TestCase):
                 Reference-only collector
               </a>
               <a href="/user/13">Missing collector</a>
+              <a href="/users/ibrahim">Aliased collector</a>
+              <a href="/es/users/mar%C3%ADa">Language-prefixed collector</a>
+              <a href="https://example.org/users/external">External user</a>
             </body></html>
             ''',
             'html.parser',
@@ -418,10 +421,15 @@ class TestPageContent(unittest.TestCase):
 
         task.process_links(soup)
 
-        self.assertEqual(soup.find_all('a'), [])
+        self.assertEqual(
+            [link['href'] for link in soup.find_all('a')],
+            ['https://example.org/users/external'],
+        )
         self.assertIn('Public collector', soup.get_text())
         self.assertIn('Reference-only collector', soup.get_text())
         self.assertIn('Missing collector', soup.get_text())
+        self.assertIn('Aliased collector', soup.get_text())
+        self.assertIn('Language-prefixed collector', soup.get_text())
         self.assertEqual(
             soup.html['data-htmlify-user-links-version'],
             '3',
@@ -575,6 +583,42 @@ class TestPageContent(unittest.TestCase):
                 ),
             ):
                 self.assertFalse(task.complete())
+
+    def test_page_with_plural_user_alias_is_incomplete(self):
+        with tempfile.TemporaryDirectory() as directory:
+            task = PageTask(
+                url=(
+                    'https://africanpalms.myspecies.info/'
+                    'content/aau-herbarium-mg01'
+                ),
+                output_dir=Path(directory),
+            )
+            output = Path(task.output().path)
+            output.parent.mkdir(parents=True)
+            output.write_text(
+                '<html data-htmlify-page-version="1" '
+                'data-htmlify-domain="africanpalms.myspecies.info" '
+                'data-htmlify-user-links-version="3"><body>'
+                '<a href="/users/ibrahim">Collector</a>'
+                '</body></html>',
+                encoding='utf-8',
+            )
+
+            with (
+                patch(
+                    'htmlify.tasks.page.configured_facet_definitions',
+                    return_value=[],
+                ),
+                patch(
+                    'htmlify.tasks.page.is_configured_facet_page',
+                    return_value=False,
+                ),
+            ):
+                self.assertFalse(task.complete())
+                self.assertEqual(
+                    task._last_incomplete_reason,
+                    'user profile link remains',
+                )
 
     def test_protocol_relative_ddev_asset_uses_canonical_request_url(self):
         task = PageTask(
