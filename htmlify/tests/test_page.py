@@ -54,6 +54,89 @@ class TestPageContent(unittest.TestCase):
         self.assertNotIn('clustrmaps.com', str(soup).lower())
         self.assertIn('Useful sidebar content', soup.get_text())
 
+    def test_replaces_simplenews_block_content_with_archive_notice(self):
+        soup = BeautifulSoup(
+            '''
+            <section class="block block-simplenews" id="block-simplenews-12">
+              <h2>Newsletter</h2>
+              <div class="content">
+                <p>Stay informed on our latest news!</p>
+                <form class="simplenews-subscribe" id="simplenews-block-form-12">
+                  <input name="mail" type="email">
+                  <button type="submit">Subscribe</button>
+                </form>
+                <div class="issues-list">Old issues</div>
+              </div>
+            </section>
+            ''',
+            'html.parser',
+        )
+
+        PageTask.replace_simplenews_blocks(soup)
+
+        block = soup.select_one('#block-simplenews-12')
+        self.assertEqual(block.h2.get_text(strip=True), 'Newsletter')
+        self.assertEqual(block['data-htmlify-simplenews-version'], '1')
+        self.assertIsNone(block.find('form'))
+        self.assertNotIn('Old issues', block.get_text())
+        notice = block.select_one('.htmlify-archive-notice[role="note"]')
+        self.assertEqual(
+            notice.get_text(' ', strip=True),
+            'Archived site: Newsletter signup is no longer available.',
+        )
+
+    def test_replaces_custom_themed_simplenews_form(self):
+        soup = BeautifulSoup(
+            '''
+            <aside class="custom-newsletter">
+              <h2>Updates</h2>
+              <form class="simplenews-subscribe">
+                <input name="mail"><button>Join</button>
+              </form>
+            </aside>
+            ''',
+            'html.parser',
+        )
+
+        PageTask.replace_simplenews_blocks(soup)
+
+        self.assertIsNone(soup.find('form'))
+        self.assertEqual(soup.h2.get_text(strip=True), 'Updates')
+        self.assertIsNotNone(soup.select_one('.htmlify-archive-notice'))
+
+    def test_page_with_live_simplenews_block_is_incomplete(self):
+        with tempfile.TemporaryDirectory() as directory:
+            task = PageTask(
+                url='https://africanpalms.myspecies.info/content/about-us',
+                output_dir=Path(directory),
+            )
+            output = Path(task.output().path)
+            output.parent.mkdir(parents=True)
+            output.write_text(
+                '<html data-htmlify-page-version="1" '
+                'data-htmlify-domain="africanpalms.myspecies.info"><body>'
+                '<section class="block block-simplenews">'
+                '<form class="simplenews-subscribe"></form>'
+                '</section></body></html>',
+                encoding='utf-8',
+            )
+
+            with (
+                patch(
+                    'htmlify.tasks.page.configured_facet_definitions',
+                    return_value=[],
+                ),
+                patch(
+                    'htmlify.tasks.page.is_configured_facet_page',
+                    return_value=False,
+                ),
+            ):
+                self.assertFalse(task.complete())
+                self.assertEqual(
+                    task._last_incomplete_reason,
+                    'Simplenews block has not been archived',
+                )
+
     def test_replaces_nonbiological_tinytax_with_static_full_tree(self):
         with tempfile.TemporaryDirectory() as directory:
             task = PageTask(

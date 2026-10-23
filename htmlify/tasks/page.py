@@ -80,6 +80,7 @@ FACET_PAGE_VERSION = '12'
 STATIC_ASSET_VERSION = '11'
 PAGE_ARCHIVE_VERSION = '1'
 USER_LINK_VERSION = '3'
+SIMPLENEWS_VERSION = '1'
 
 class PageTask(BaseTask):
 
@@ -209,6 +210,7 @@ class PageTask(BaseTask):
         # such as /es/image_captcha do not create a misleading /es tree.
         self.remove_captcha(soup)
         self.remove_clustrmaps(soup)
+        self.replace_simplenews_blocks(soup)
 
         self.process_css_style_urls(soup)
         self.process_css(soup)
@@ -319,6 +321,68 @@ class PageTask(BaseTask):
                 paragraph.decompose()
             else:
                 widget.decompose()
+
+    @staticmethod
+    def _simplenews_notice(soup):
+        notice = soup.new_tag(
+            'p',
+            attrs={
+                'class': 'htmlify-archive-notice',
+                'role': 'note',
+                'data-htmlify-simplenews-version': SIMPLENEWS_VERSION,
+            },
+        )
+        lead = soup.new_tag('strong')
+        lead.string = 'Archived site:'
+        notice.append(lead)
+        notice.append(' Newsletter signup is no longer available.')
+        return notice
+
+    @classmethod
+    def replace_simplenews_blocks(cls, soup):
+        """Replace interactive Simplenews blocks with an archive notice."""
+        blocks = []
+        seen = set()
+        for block in soup.select(
+            '.block-simplenews, [id^="block-simplenews-"]'
+        ):
+            if id(block) in seen:
+                continue
+            seen.add(id(block))
+            blocks.append(block)
+
+        for block in blocks:
+            block['data-htmlify-simplenews-version'] = SIMPLENEWS_VERSION
+            content = block.select_one('.content')
+            if content is None:
+                content = block
+                heading = content.find(
+                    ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
+                    recursive=False,
+                )
+                preserved_heading = heading.extract() if heading else None
+                content.clear()
+                if preserved_heading:
+                    content.append(preserved_heading)
+            else:
+                content.clear()
+            content.append(cls._simplenews_notice(soup))
+
+        # Some themes omit Drupal's module class from blocks. A Simplenews
+        # form is still unambiguously interactive and cannot work statically.
+        for form in list(soup.find_all('form')):
+            classes = set(form.get('class', []))
+            form_id = form.get('id', '')
+            if not (
+                classes & {'simplenews-subscribe', 'simplenews-unsubscribe'}
+                or form_id.startswith('simplenews-block-form')
+            ):
+                continue
+            if form.find_parent(attrs={
+                'data-htmlify-simplenews-version': SIMPLENEWS_VERSION,
+            }):
+                continue
+            form.replace_with(cls._simplenews_notice(soup))
 
     def remove_feeds(self, soup):
         if feeds_div := soup.find(class_='feed-icon'):
@@ -520,6 +584,27 @@ class PageTask(BaseTask):
                 return self._incomplete('facet JSON index is missing')
         if 'clustrmaps.com' in html.lower():
             return self._incomplete('retired ClustrMaps widget remains')
+        has_simplenews_block = (
+            self._html_has_class(html, 'block-simplenews')
+            or bool(re.search(
+                r'id=["\']block-simplenews-[^"\']+["\']',
+                html,
+                flags=re.IGNORECASE,
+            ))
+        )
+        if (
+            has_simplenews_block
+            and f'data-htmlify-simplenews-version="{SIMPLENEWS_VERSION}"'
+            not in html
+        ):
+            return self._incomplete('Simplenews block has not been archived')
+        if re.search(
+            r'<form\b[^>]*(?:simplenews-(?:subscribe|unsubscribe)|'
+            r'id=["\']simplenews-block-form)',
+            html,
+            flags=re.IGNORECASE,
+        ):
+            return self._incomplete('live Simplenews signup form remains')
         if self._html_has_class(html, 'block-tinytax'):
             return self._incomplete('live TinyTax tree remains')
         if 'htmlify-taxonomy-tree' in html:
