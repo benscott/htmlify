@@ -106,6 +106,107 @@ class TestPageContent(unittest.TestCase):
             )
             write_index.assert_called_once()
 
+    def test_replaces_every_tinytax_block_on_the_page(self):
+        with tempfile.TemporaryDirectory() as directory:
+            task = PageTask(
+                url=(
+                    'https://aipa.myspecies.info/'
+                    'nontaxonomy/term/2498'
+                ),
+                output_dir=Path(directory),
+            )
+            soup = BeautifulSoup(
+                '''
+                <html><body class="page-nontaxonomy-term-2498">
+                  <section class="block block-tinytax" id="block-tinytax-198">
+                    <div class="content">
+                      <a href="/es/nontaxonomy/term/2498">Diptera</a>
+                    </div>
+                  </section>
+                  <section class="block block-tinytax" id="block-tinytax-4">
+                    <div class="content">
+                      <a href="/es/taxonomy/term/72">Leguminosae</a>
+                    </div>
+                  </section>
+                </body></html>
+                ''',
+                'html.parser',
+            )
+
+            term_vids = {2498: 198, 72: 4}
+            with (
+                patch(
+                    'htmlify.tasks.page.vocabulary_for_term',
+                    side_effect=lambda _domain, tid: term_vids.get(tid),
+                ),
+                patch('htmlify.tasks.page.write_taxonomy_index') as write_index,
+            ):
+                task.process_tinytax(soup)
+
+            trees = soup.select('.htmlify-taxonomy-tree')
+            self.assertEqual(len(trees), 2)
+            self.assertIsNone(soup.select_one('.block-tinytax'))
+            self.assertEqual(
+                [tree['data-index-url'] for tree in trees],
+                ['/assets/taxonomy/198.json', '/assets/taxonomy/4.json'],
+            )
+            self.assertEqual(
+                [tree['data-current-tid'] for tree in trees],
+                ['2498', '0'],
+            )
+            input_ids = [field['id'] for field in soup.select(
+                '.htmlify-taxonomy-query'
+            )]
+            self.assertEqual(len(input_ids), len(set(input_ids)))
+            self.assertEqual(write_index.call_count, 2)
+
+    def test_static_tinytax_id_is_not_mistaken_for_live_block_class(self):
+        with tempfile.TemporaryDirectory() as directory:
+            task = PageTask(
+                url=(
+                    'https://aipa.myspecies.info/'
+                    'nontaxonomy/term/2498'
+                ),
+                output_dir=Path(directory),
+            )
+            output = Path(task.output().path)
+            output.parent.mkdir(parents=True)
+            taxonomy_index = (
+                Path(directory) / 'assets' / 'taxonomy' / '198.json'
+            )
+            taxonomy_index.parent.mkdir(parents=True)
+            taxonomy_index.write_text('{}', encoding='utf-8')
+            output.write_text(
+                '<html data-htmlify-page-version="1" '
+                'data-htmlify-domain="aipa.myspecies.info"><body>'
+                '<section id="block-tinytax-198" '
+                'class="block htmlify-taxonomy-tree" '
+                'data-index-url="/assets/taxonomy/198.json"></section>'
+                f'<script src="/assets/species-page.js?v={STATIC_ASSET_VERSION}">'
+                '</script></body></html>',
+                encoding='utf-8',
+            )
+
+            with (
+                patch(
+                    'htmlify.tasks.page.configured_facet_definitions',
+                    return_value=[],
+                ),
+                patch(
+                    'htmlify.tasks.page.is_configured_facet_page',
+                    return_value=False,
+                ),
+            ):
+                self.assertTrue(task.complete())
+                output.write_text(
+                    output.read_text(encoding='utf-8').replace(
+                        'class="block htmlify-taxonomy-tree"',
+                        'class="block block-tinytax"',
+                    ),
+                    encoding='utf-8',
+                )
+                self.assertFalse(task.complete())
+
     def test_old_exposed_view_page_is_revisited(self):
         with tempfile.TemporaryDirectory() as directory:
             task = PageTask(

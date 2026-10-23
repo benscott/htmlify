@@ -508,7 +508,7 @@ class PageTask(BaseTask):
                 return self._incomplete('facet JSON index is missing')
         if 'clustrmaps.com' in html.lower():
             return self._incomplete('retired ClustrMaps widget remains')
-        if 'block-tinytax' in html:
+        if re.search(r'class=["\'][^"\']*\bblock-tinytax\b', html):
             return self._incomplete('live TinyTax tree remains')
         if 'htmlify-taxonomy-tree' in html:
             match = re.search(r'data-index-url=["\']([^"\']+)["\']', html)
@@ -832,10 +832,30 @@ class PageTask(BaseTask):
             if soup.body:
                 soup.body.append(script)
 
-    def _replace_taxonomy_tree(self, soup, tid, vid, term_path=None):
-        block = soup.select_one(
-            'section.block-tinytax, section.htmlify-taxonomy-tree'
-        )
+    def _replace_taxonomy_tree(
+        self,
+        soup,
+        tid,
+        vid,
+        term_path=None,
+        block=None,
+    ):
+        if block is None:
+            candidates = soup.select(
+                'section.block-tinytax, section.htmlify-taxonomy-tree'
+            )
+            index_url = taxonomy_asset_url(vid)
+            block = next(
+                (
+                    candidate
+                    for candidate in candidates
+                    if (
+                        candidate.get('data-index-url') == index_url
+                        or candidate.get('id') == f'block-tinytax-{int(vid)}'
+                    )
+                ),
+                candidates[0] if candidates else None,
+            )
         if not block:
             return
 
@@ -854,7 +874,7 @@ class PageTask(BaseTask):
 
         classes = [
             name for name in block.get('class', [])
-            if name != 'block-tinytax'
+            if name not in {'block-tinytax', 'htmlify-taxonomy-tree'}
         ]
         classes.append('htmlify-taxonomy-tree')
         block['class'] = classes
@@ -869,14 +889,19 @@ class PageTask(BaseTask):
         form = soup.new_tag('form')
         form['class'] = ['htmlify-taxonomy-search']
         form['role'] = 'search'
-        label = soup.new_tag('label', attrs={'for': 'htmlify-taxonomy-query'})
+        input_id = (
+            f'htmlify-taxonomy-query-{int(vid)}-'
+            f'{len(soup.select(".htmlify-taxonomy-search")) + 1}'
+        )
+        label = soup.new_tag('label', attrs={'for': input_id})
         label.string = 'Find a taxon'
         controls = soup.new_tag('div')
         controls['class'] = ['htmlify-taxonomy-search-controls']
         query = soup.new_tag(
             'input',
-            id='htmlify-taxonomy-query',
+            id=input_id,
             attrs={
+                'class': 'htmlify-taxonomy-query',
                 'name': 'q',
                 'type': 'search',
                 'autocomplete': 'off',
@@ -927,25 +952,45 @@ class PageTask(BaseTask):
     def process_tinytax(self, soup):
         logger.debug(f'Tiny tax detected {self.url} - making it static...')
 
-        block = soup.select_one('section.block-tinytax')
-        if not block:
+        blocks = list(soup.select('section.block-tinytax'))
+        if not blocks:
             return
 
-        tid = self._tinytax_term_id(soup)
-        vid = vocabulary_for_term(self.domain, tid) if tid else None
-        if not tid or not vid:
-            logger.warning(
-                'Could not identify TinyTax vocabulary for %s',
-                self.url,
-            )
-            return
-
-        self._replace_taxonomy_tree(
-            soup,
-            tid,
-            vid,
-            term_path=self._tinytax_term_path(block),
+        page_tid = self._tinytax_term_id(soup)
+        page_vid = (
+            vocabulary_for_term(self.domain, page_tid)
+            if page_tid else None
         )
+
+        for block in blocks:
+            block_tid = self._tinytax_block_term_id(block)
+            vid = (
+                vocabulary_for_term(self.domain, block_tid)
+                if block_tid else None
+            )
+            if not vid:
+                block_id = block.get('id', '')
+                if match := re.fullmatch(r'block-tinytax-(\d+)', block_id):
+                    vid = int(match.group(1))
+            if not vid:
+                vid = page_vid
+            if not vid:
+                logger.warning(
+                    'Removing unidentified TinyTax block %s from %s',
+                    block.get('id', '(no id)'),
+                    self.url,
+                )
+                block.decompose()
+                continue
+
+            current_tid = page_tid if page_vid == vid else 0
+            self._replace_taxonomy_tree(
+                soup,
+                current_tid,
+                vid,
+                term_path=self._tinytax_term_path(block),
+                block=block,
+            )
 
     def _tinytax_term_id(self, soup):
         match = re.search(
@@ -975,6 +1020,16 @@ class PageTask(BaseTask):
         if match := pattern.match(path):
             return match.group(1)
         return '/taxonomy/term'
+
+    @staticmethod
+    def _tinytax_block_term_id(block):
+        for link in block.find_all('a', href=True):
+            if match := re.search(
+                r'/(?:taxonomy|nontaxonomy|simpletaxonomy)/term/(\d+)',
+                urlparse(link['href']).path,
+            ):
+                return int(match.group(1))
+        return None
     
     def _is_slickgrid(self, soup):
         return bool(soup.find('div', {"class": "slickgrid-wrapper"}))         

@@ -49,7 +49,7 @@
     var status = root.querySelector('.htmlify-taxonomy-status');
     var container = root.querySelector('.htmlify-taxonomy-list');
     var form = root.querySelector('.htmlify-taxonomy-search');
-    var queryInput = root.querySelector('#htmlify-taxonomy-query');
+    var queryInput = root.querySelector('.htmlify-taxonomy-query');
     var clearButton = root.querySelector('.htmlify-taxonomy-clear');
     var current = String(root.getAttribute('data-current-tid') || '');
     var termPath = String(
