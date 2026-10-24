@@ -138,6 +138,66 @@ class TestSiteTask(unittest.TestCase):
                 )
                 self.assertTrue(task.site_aliases_complete())
 
+    def test_duplicate_alias_uses_newest_target_and_replaces_old_wrapper(self):
+        with TemporaryDirectory() as temporary_directory:
+            sites_root = Path(temporary_directory)
+            site_root = sites_root / 'acanthocephala.myspecies.info'
+            for node_id in ('2', '3'):
+                page = site_root / 'node' / node_id / 'index.html'
+                page.parent.mkdir(parents=True)
+                page.write_text(node_id, encoding='utf-8')
+
+            alias = site_root / 'about-us'
+            alias.mkdir(parents=True)
+            (alias / 'index.html').symlink_to(
+                site_root / 'node' / '2' / 'index.html'
+            )
+
+            # get_site_aliases() returns pid ASC, so node/3 is the newer
+            # Drupal alias and must win just as it does in drupal_lookup_path.
+            aliases = [
+                ('about-us', 'node/2'),
+                ('about-us', 'node/3'),
+            ]
+            with (
+                patch('htmlify.tasks.site.SITES_DIR', sites_root),
+                patch(
+                    'htmlify.tasks.site.get_site_aliases',
+                    return_value=aliases,
+                ),
+            ):
+                task = SiteTask(
+                    domain='acanthocephala.myspecies.info',
+                    platform_path='/tmp/scratchpads',
+                )
+                task.create_site_aliases(['node/2', 'node/3'])
+
+                self.assertTrue(alias.is_symlink())
+                self.assertEqual(
+                    alias.resolve(),
+                    (site_root / 'node' / '3').resolve(),
+                )
+                self.assertTrue(
+                    task.site_aliases_complete(['node/2', 'node/3'])
+                )
+
+    def test_alias_conversion_refuses_directory_with_real_child_content(self):
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            alias = root / 'about-us'
+            alias.mkdir()
+            (alias / 'team').mkdir()
+
+            with self.assertRaisesRegex(
+                FileExistsError,
+                'directory with child content',
+            ):
+                SiteTask._ensure_symlink(
+                    alias,
+                    root / 'node' / '3',
+                    target_is_directory=True,
+                )
+
     def test_alias_to_unpublished_node_is_not_created_or_required(self):
         with TemporaryDirectory() as temporary_directory:
             sites_root = Path(temporary_directory)

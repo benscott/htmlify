@@ -261,7 +261,11 @@ class SiteTask(BaseTask):
                 self.normalise_page_path(path)
                 for path in sitemap_paths
             }
-        mappings = {}
+        # get_site_aliases() is ordered by pid ascending. Collapse duplicates
+        # before checking targets so an unavailable newest row does not make
+        # us incorrectly fall back to an older alias that Drupal would never
+        # resolve.
+        candidate_mappings = {}
         skipped_targets = 0
         skipped_aliases = set()
         for alias, target in get_site_aliases(self.domain):
@@ -277,6 +281,22 @@ class SiteTask(BaseTask):
                     f'Ignoring unsafe site alias {alias!r} -> {target!r}'
                 )
                 continue
+            previous_target = candidate_mappings.get(alias)
+            if previous_target and previous_target != target:
+                logger.warning(
+                    'Duplicate Drupal alias %s on %s: selecting newer '
+                    'target %s instead of %s',
+                    alias,
+                    self.domain,
+                    target,
+                    previous_target,
+                )
+            # get_site_aliases() returns pid order, matching Drupal's rule
+            # that the newest duplicate alias wins for inbound paths.
+            candidate_mappings[alias] = target
+
+        mappings = {}
+        for alias, target in candidate_mappings.items():
             if (
                 sitemap_paths is not None
                 and not self._alias_target_should_exist(
@@ -311,6 +331,29 @@ class SiteTask(BaseTask):
             if link_path.resolve(strict=False) == target_path.resolve(strict=False):
                 return
             link_path.unlink()
+        elif link_path.is_dir():
+            # An alias that once had child aliases is represented by a real
+            # directory whose index.html points to the alias target. If it is
+            # now a leaf alias, that generated wrapper can safely become a
+            # direct directory symlink. Never remove real child content.
+            children = list(link_path.iterdir())
+            generated_index = link_path / 'index.html'
+            replaceable = (
+                not children
+                or (
+                    len(children) == 1
+                    and children[0] == generated_index
+                    and generated_index.is_symlink()
+                )
+            )
+            if not replaceable:
+                raise FileExistsError(
+                    f'Cannot create alias {link_path}: a non-symlink '
+                    'directory with child content already exists'
+                )
+            if generated_index.is_symlink():
+                generated_index.unlink()
+            link_path.rmdir()
         elif link_path.exists():
             raise FileExistsError(
                 f'Cannot create alias {link_path}: a non-symlink already exists'

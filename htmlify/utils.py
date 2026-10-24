@@ -184,7 +184,10 @@ def get_first_directory(path):
             return Path(path.anchor) / part
 
 def get_site_aliases(domain):
-    sql = "SELECT alias, source FROM url_alias"
+    # Drupal resolves duplicate inbound aliases using the most recently
+    # created row (highest pid). Returning oldest-first lets SiteTask's alias
+    # mapping deterministically retain that same newest row.
+    sql = "SELECT alias, source FROM url_alias ORDER BY pid ASC"
     return db_manager.fetch(domain, sql)
 
 def is_under_maintenance(domain):
