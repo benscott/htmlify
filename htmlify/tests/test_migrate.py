@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from subprocess import CompletedProcess
 from unittest.mock import Mock, patch
 
 import pandas as pd
@@ -157,6 +158,10 @@ class TestMigrationCommand(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as directory,
             patch('htmlify.cli._require_database_credentials'),
+            patch(
+                'htmlify.cli._selected_migration_domains',
+                return_value=['bravo.myspecies.info'],
+            ),
             patch('htmlify.cli.config.PROCESSING_DATA_DIR', Path(directory)),
             patch('htmlify.cli.luigi.build', return_value=build_result) as build,
         ):
@@ -175,6 +180,64 @@ class TestMigrationCommand(unittest.TestCase):
         task = build.call_args.args[0][0]
         self.assertEqual(task.limit, 2)
         self.assertEqual(task.offset, 3)
+
+    def test_multiple_sites_run_in_separate_child_processes(self):
+        runner = CliRunner()
+        domains = [
+            'alpha.myspecies.info',
+            'bravo.myspecies.info',
+        ]
+
+        with (
+            patch('htmlify.cli._require_database_credentials'),
+            patch(
+                'htmlify.cli._selected_migration_domains',
+                return_value=domains,
+            ),
+            patch(
+                'htmlify.cli.subprocess.run',
+                side_effect=[CompletedProcess([], 0), CompletedProcess([], 0)],
+            ) as run,
+        ):
+            result = runner.invoke(
+                cli,
+                ['migrate', '--limit', '2', '--workers', '3'],
+            )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(run.call_count, 2)
+        commands = [item.args[0] for item in run.call_args_list]
+        self.assertEqual(
+            [command[command.index('--domain') + 1] for command in commands],
+            domains,
+        )
+        self.assertTrue(all(
+            command[command.index('--workers') + 1] == '3'
+            for command in commands
+        ))
+
+    def test_isolated_batch_continues_but_exits_nonzero_after_failure(self):
+        runner = CliRunner()
+
+        with (
+            patch('htmlify.cli._require_database_credentials'),
+            patch(
+                'htmlify.cli._selected_migration_domains',
+                return_value=[
+                    'alpha.myspecies.info',
+                    'bravo.myspecies.info',
+                ],
+            ),
+            patch(
+                'htmlify.cli.subprocess.run',
+                side_effect=[CompletedProcess([], 1), CompletedProcess([], 0)],
+            ) as run,
+        ):
+            result = runner.invoke(cli, ['migrate', '--limit', '2'])
+
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertEqual(run.call_count, 2)
+        self.assertIn('alpha.myspecies.info (exit code 1)', result.output)
 
 
 if __name__ == '__main__':

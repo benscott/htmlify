@@ -77,6 +77,12 @@ uv run htmlify migrate \
   --offset 0
 ```
 
+When a batch contains more than one site, the CLI automatically runs each site
+in a fresh child process, one after another. This releases Luigi's page-task
+graph and other per-site memory before the next site begins. `--workers` still
+controls concurrent page rendering within the current site; it does not make
+several sites run concurrently.
+
 Then run the next 20 sites:
 
 ```bash

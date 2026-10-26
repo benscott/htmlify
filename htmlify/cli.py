@@ -5,6 +5,8 @@ from luigi.execution_summary import LuigiStatusCode
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import time
 import pandas as pd
 
@@ -41,6 +43,109 @@ from htmlify.validation import validate_copy, validate_site
 
 cli = typer.Typer()
 count = 0
+
+
+def _selected_migration_domains(task):
+    """Return the fixed multi-site batch selected by a migration task."""
+    sites_list_task = SitesListTask()
+    sites_list_path = Path(sites_list_task.output().path)
+    if not sites_list_path.is_file():
+        sites_list_task.run()
+    sites = pd.read_csv(sites_list_path)
+    selected = task.select_sites(sites)
+    return selected.resolved_domain.astype(str).tolist()
+
+
+def _isolated_migration_command(
+    domain,
+    *,
+    workers,
+    platform_path=None,
+    files_mode=None,
+    solr_url=None,
+):
+    """Build a single-site command using this Python environment."""
+    command = [
+        sys.executable,
+        '-m',
+        'htmlify.cli',
+        'migrate',
+        '--domain',
+        str(domain),
+        '--workers',
+        str(workers),
+    ]
+    if platform_path:
+        command.extend(['--platform-path', str(platform_path)])
+    if files_mode:
+        command.extend(['--files-mode', files_mode])
+    if solr_url:
+        command.extend(['--solr-url', solr_url])
+    return command
+
+
+def _run_isolated_migrations(
+    domains,
+    *,
+    workers,
+    platform_path=None,
+    files_mode=None,
+    solr_url=None,
+):
+    """Run each site in a fresh process so Luigi state cannot accumulate."""
+    failures = []
+    total = len(domains)
+    typer.secho(
+        f'Running {total} sites in isolated processes to bound memory use.',
+        fg=typer.colors.CYAN,
+    )
+    started = time.monotonic()
+    for index, domain in enumerate(domains, start=1):
+        typer.secho(
+            f'\n[{index}/{total}] Migrating {domain}',
+            fg=typer.colors.YELLOW,
+            bold=True,
+        )
+        result = subprocess.run(_isolated_migration_command(
+            domain,
+            workers=workers,
+            platform_path=platform_path,
+            files_mode=files_mode,
+            solr_url=solr_url,
+        ))
+        if result.returncode:
+            failures.append((domain, result.returncode))
+            typer.secho(
+                f'[{index}/{total}] {domain} failed with exit code '
+                f'{result.returncode}; continuing with the next site.',
+                fg=typer.colors.RED,
+                err=True,
+            )
+        else:
+            typer.secho(
+                f'[{index}/{total}] {domain} complete',
+                fg=typer.colors.GREEN,
+            )
+
+    typer.echo(
+        f'Isolated migration time: '
+        f'{format_duration(time.monotonic() - started)}'
+    )
+    if failures:
+        typer.secho(
+            f'Failed sites: {len(failures)}',
+            fg=typer.colors.RED,
+            bold=True,
+            err=True,
+        )
+        for domain, returncode in failures:
+            typer.secho(
+                f'  {domain} (exit code {returncode})',
+                fg=typer.colors.RED,
+                err=True,
+            )
+        return 1
+    return 0
 
 
 def _require_database_credentials():
@@ -662,6 +767,32 @@ def migrate(
             f'Migrating all sites by {sort_by} {sort_order}',
             fg=typer.colors.YELLOW,
         )
+
+    # A single Luigi scheduler retains its complete task graph. Large batches
+    # can therefore consume memory long after earlier sites have finished.
+    # Select the batch once, but run each site in a fresh child process so all
+    # of its scheduler and page-task state is returned to the OS afterwards.
+    if not domain:
+        selection_task = MigrateTask(**task_params)
+        try:
+            selected_domains = _selected_migration_domains(selection_task)
+        except Exception as error:
+            typer.secho(
+                f'Could not select migration sites: {_concise_exception(error)}',
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(1)
+        if len(selected_domains) > 1:
+            _require_database_credentials()
+            exit_code = _run_isolated_migrations(
+                selected_domains,
+                workers=workers,
+                platform_path=platform_path,
+                files_mode=files_mode,
+                solr_url=solr_url,
+            )
+            raise typer.Exit(exit_code)
       
     def status_update(task):
         global count
