@@ -925,12 +925,10 @@ class PageTask(BaseTask):
 
         tabs_container = soup.select_one('#region-content div.tabs')
         tabs_list = tabs_container.select_one('ul.tabs') if tabs_container else None
-        if not tabs_container or not tabs_list:
-            return
 
         tabs = []
         seen = set()
-        for link in tabs_list.find_all('a', href=True):
+        for link in tabs_list.find_all('a', href=True) if tabs_list else []:
             parsed = urlparse(link['href'])
             path = parsed.path.rstrip('/') or '/'
             if path != base_path and not path.startswith(f'{base_path}/'):
@@ -941,9 +939,6 @@ class PageTask(BaseTask):
                 continue
             seen.add(slug)
             tabs.append({'slug': slug, 'label': label, 'path': path})
-
-        if not tabs:
-            return
 
         panels = []
         for tab in tabs:
@@ -1002,7 +997,8 @@ class PageTask(BaseTask):
 
         # The base page's original content was used to build the first panel.
         # Leaving it in place makes it appear below every selected tab.
-        self._remove_original_species_content(soup, tabs_container)
+        if tabs_container and tabs:
+            self._remove_original_species_content(soup, tabs_container)
 
         if panels:
             tabs_container.clear()
@@ -1031,7 +1027,7 @@ class PageTask(BaseTask):
             for _, panel in panels:
                 insertion_point.insert_after(panel)
                 insertion_point = panel
-        else:
+        elif tabs_container and tabs:
             tabs_container.decompose()
 
         content_region = soup.select_one('#region-content')
@@ -1040,7 +1036,9 @@ class PageTask(BaseTask):
             if 'htmlify-species-page' not in classes:
                 classes.append('htmlify-species-page')
             content_region['class'] = classes
-            content_region['data-htmlify-species-version'] = SPECIES_PAGE_VERSION
+        version_target = content_region or soup.html
+        if version_target:
+            version_target['data-htmlify-species-version'] = SPECIES_PAGE_VERSION
 
         self._replace_taxonomy_tree(soup, tid, vid)
         species_script = f'/assets/species-page.js?v={STATIC_ASSET_VERSION}'

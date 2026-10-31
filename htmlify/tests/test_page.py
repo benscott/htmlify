@@ -8,7 +8,11 @@ import requests
 
 from htmlify import config
 from htmlify.exposed_views import EXPOSED_VIEW_VERSION
-from htmlify.tasks.page import PageTask, STATIC_ASSET_VERSION
+from htmlify.tasks.page import (
+    PageTask,
+    SPECIES_PAGE_VERSION,
+    STATIC_ASSET_VERSION,
+)
 
 
 class TestPageContent(unittest.TestCase):
@@ -999,6 +1003,50 @@ class TestSpeciesPage(unittest.TestCase):
                 configured_facet_page=True,
             )
         )
+
+    def test_species_page_without_tabs_is_still_staticized(self):
+        task = PageTask(
+            url='https://africhthy.myspecies.info/taxonomy/term/10192',
+            output_dir=Path('/tmp/africhthy-species-test'),
+        )
+        soup = BeautifulSoup(
+            '''
+            <html><body>
+              <section class="block block-tinytax" id="block-tinytax-7">
+                <h2>Classification</h2><div class="content"></div>
+              </section>
+              <div id="region-content" class="region region-content">
+                <h1>African fish</h1>
+                <article>A species page without Drupal tabs.</article>
+              </div>
+            </body></html>
+            ''',
+            'html.parser',
+        )
+
+        with patch(
+            'htmlify.tasks.page.write_taxonomy_index',
+        ) as write_index:
+            task.species_page(soup, 10192, 7)
+
+        content = soup.select_one('#region-content')
+        self.assertEqual(
+            content['data-htmlify-species-version'],
+            SPECIES_PAGE_VERSION,
+        )
+        self.assertIn('htmlify-species-page', content['class'])
+        self.assertIn('A species page without Drupal tabs.', soup.get_text())
+        self.assertEqual(
+            soup.select_one('.htmlify-taxonomy-tree')['data-index-url'],
+            '/assets/taxonomy/7.json',
+        )
+        self.assertIsNotNone(
+            soup.find(
+                'script',
+                src=f'/assets/species-page.js?v={STATIC_ASSET_VERSION}',
+            )
+        )
+        write_index.assert_called_once()
 
     def test_expands_slickgrid_before_copying_a_species_tab(self):
         task = PageTask(
