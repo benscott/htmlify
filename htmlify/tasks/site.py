@@ -62,6 +62,24 @@ class SiteTask(BaseTask):
     page_limit = luigi.OptionalIntParameter(default=None)
     page_offset = luigi.IntParameter(default=0)
 
+    def _run_finalisation_stage(self, label, callback):
+        """Run one observable site-finalisation step and report its duration."""
+        started = time.monotonic()
+        logger.info(f'Finalising {self.domain}: {label} started')
+        try:
+            result = callback()
+        except Exception:
+            logger.exception(
+                f'Finalising {self.domain}: {label} failed after '
+                f'{time.monotonic() - started:.1f}s'
+            )
+            raise
+        logger.info(
+            f'Finalising {self.domain}: {label} completed in '
+            f'{time.monotonic() - started:.1f}s'
+        )
+        return result
+
     def requires(self):      
         # The sitemap is assembled from Drupal's database, including content,
         # menu links, and compiled View routes. No recursive site crawl is
@@ -682,8 +700,9 @@ class SiteTask(BaseTask):
         if pending_page_tasks:
             yield pending_page_tasks
 
-        thumbnail_result = create_missing_gallery_thumbnails(
-            self.output().path,
+        thumbnail_result = self._run_finalisation_stage(
+            'gallery thumbnails',
+            lambda: create_missing_gallery_thumbnails(self.output().path),
         )
         if thumbnail_result['created']:
             logger.info(
@@ -697,19 +716,32 @@ class SiteTask(BaseTask):
                 'original nor large derivative has been copied'
             )
 
-        self.create_file_colorbox_aliases()
+        self._run_finalisation_stage(
+            'file lightbox pages',
+            self.create_file_colorbox_aliases,
+        )
 
         # Partial and whole-site runs have distinct completion targets, so a
         # filtered test can satisfy Luigi without marking the site complete.
         if not self.is_filtered_run:
-            logger.debug('Creating site aliases')
-            self.create_site_aliases(all_links)
-            self.create_language_prefix_aliases()
+            # Page completion checks can open this connection hours before
+            # finalisation. Do not reuse a socket that may have gone stale
+            # while Luigi rendered the site's dynamic page dependencies.
+            db_manager.close_connection(self.domain)
+            self._run_finalisation_stage(
+                'Drupal URL aliases',
+                lambda: self.create_site_aliases(all_links),
+            )
+            self._run_finalisation_stage(
+                'language-prefix aliases',
+                self.create_language_prefix_aliases,
+            )
 
         completion_target = self.completion_output()
         Path(completion_target.path).parent.mkdir(parents=True, exist_ok=True)
         with completion_target.open('w') as f:
             f.write(f'{STATIC_ARCHIVE_VERSION}\n')
+        logger.info(f'Finalising {self.domain}: completion marker written')
 
     def output(self):
         return luigi.LocalTarget(SITES_DIR / self.domain)
