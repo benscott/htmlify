@@ -62,10 +62,17 @@ class SiteTask(BaseTask):
     page_limit = luigi.OptionalIntParameter(default=None)
     page_offset = luigi.IntParameter(default=0)
 
+    def _report_progress(self, message):
+        """Write child-process progress to both the terminal and debug log."""
+        logger.info(message)
+        print(f'[htmlify] {message}', flush=True)
+
     def _run_finalisation_stage(self, label, callback):
         """Run one observable site-finalisation step and report its duration."""
         started = time.monotonic()
-        logger.info(f'Finalising {self.domain}: {label} started')
+        self._report_progress(
+            f'Finalising {self.domain}: {label} started'
+        )
         try:
             result = callback()
         except Exception:
@@ -74,7 +81,7 @@ class SiteTask(BaseTask):
                 f'{time.monotonic() - started:.1f}s'
             )
             raise
-        logger.info(
+        self._report_progress(
             f'Finalising {self.domain}: {label} completed in '
             f'{time.monotonic() - started:.1f}s'
         )
@@ -691,7 +698,7 @@ class SiteTask(BaseTask):
         ]
         scan_started = time.monotonic()
         pending_page_tasks = []
-        logger.info(
+        self._report_progress(
             f'Checking {len(page_tasks):,} existing page outputs for '
             f'{self.domain}'
         )
@@ -699,7 +706,7 @@ class SiteTask(BaseTask):
             if not task.complete():
                 pending_page_tasks.append(task)
             if position % 1000 == 0 or position == len(page_tasks):
-                logger.info(
+                self._report_progress(
                     f'Checked {position:,}/{len(page_tasks):,} pages for '
                     f'{self.domain}; {len(pending_page_tasks):,} pending '
                     f'({time.monotonic() - scan_started:.1f}s)'
@@ -710,7 +717,7 @@ class SiteTask(BaseTask):
             completed=len(page_tasks) - len(pending_page_tasks),
         )
         if pending_page_tasks:
-            logger.info(
+            self._report_progress(
                 f'Scheduling {len(pending_page_tasks):,} pending pages for '
                 f'{self.domain} after a '
                 f'{time.monotonic() - scan_started:.1f}s output scan'
@@ -758,7 +765,9 @@ class SiteTask(BaseTask):
         Path(completion_target.path).parent.mkdir(parents=True, exist_ok=True)
         with completion_target.open('w') as f:
             f.write(f'{STATIC_ARCHIVE_VERSION}\n')
-        logger.info(f'Finalising {self.domain}: completion marker written')
+        self._report_progress(
+            f'Finalising {self.domain}: completion marker written'
+        )
 
     def output(self):
         return luigi.LocalTarget(SITES_DIR / self.domain)
