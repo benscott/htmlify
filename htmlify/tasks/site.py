@@ -689,15 +689,32 @@ class SiteTask(BaseTask):
             for link in links
             if self.url_is_valid_filename(self.path_to_url(link))
         ]
-        pending_page_tasks = [
-            task for task in page_tasks if not task.complete()
-        ]
+        scan_started = time.monotonic()
+        pending_page_tasks = []
+        logger.info(
+            f'Checking {len(page_tasks):,} existing page outputs for '
+            f'{self.domain}'
+        )
+        for position, task in enumerate(page_tasks, start=1):
+            if not task.complete():
+                pending_page_tasks.append(task)
+            if position % 1000 == 0 or position == len(page_tasks):
+                logger.info(
+                    f'Checked {position:,}/{len(page_tasks):,} pages for '
+                    f'{self.domain}; {len(pending_page_tasks):,} pending '
+                    f'({time.monotonic() - scan_started:.1f}s)'
+                )
         initialise_site_progress(
             self.domain,
             len(page_tasks),
             completed=len(page_tasks) - len(pending_page_tasks),
         )
         if pending_page_tasks:
+            logger.info(
+                f'Scheduling {len(pending_page_tasks):,} pending pages for '
+                f'{self.domain} after a '
+                f'{time.monotonic() - scan_started:.1f}s output scan'
+            )
             yield pending_page_tasks
 
         thumbnail_result = self._run_finalisation_stage(
