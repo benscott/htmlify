@@ -5,6 +5,8 @@ import requests_cache
 from urllib.parse import urlparse, urlunparse, urlencode
 import os.path
 import copy
+import errno
+import hashlib
 import re
 import yaml
 from selenium import webdriver
@@ -15,6 +17,7 @@ from urllib.parse import parse_qs, unquote
 from collections import OrderedDict
 import json
 import html
+from tempfile import NamedTemporaryFile
 
 # from selenium import webdriver 
 # from selenium.webdriver.chrome.options import Options
@@ -1495,28 +1498,113 @@ class PageTask(BaseTask):
         if parsed_url.netloc.startswith('www'):
             url = url.replace('www.', '')
 
-        dest_path = concat_path(self.output_dir, parsed_url.path)
+        public_path = parsed_url.path
+        dest_path = concat_path(self.output_dir, public_path)
 
         # If this file is in the sites directory, we should already have it
         if parsed_url.path.startswith('/sites'):
             if config.DRUPAL_FILES_MODE == 'external':
                 return parsed_url.path
-            if not dest_path.exists():
-                logger.error(f'Sites file {dest_path} does not exist')
-            else:
+            if dest_path.is_file():
                 return parsed_url.path  
+            logger.warning(
+                f'Sites file {dest_path} does not exist; archiving a '
+                'local hashed copy instead'
+            )
+            public_path, dest_path = self._hashed_remote_asset(url, parsed_url)
 
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        if not self._asset_path_is_usable(dest_path):
+            public_path, dest_path = self._hashed_remote_asset(url, parsed_url)
+
+        if dest_path.is_file():
+            return public_path
+
+        try:
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            if error.errno not in {
+                errno.EEXIST,
+                errno.EISDIR,
+                errno.ENAMETOOLONG,
+                errno.ENOTDIR,
+            }:
+                raise
+            public_path, dest_path = self._hashed_remote_asset(url, parsed_url)
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
             content = self._request_url(url)
         except requests.exceptions.HTTPError:
             return None
         else:
-            with dest_path.open('wb') as f:
-                f.write(content)
+            try:
+                self._write_remote_asset(dest_path, content)
+            except OSError as error:
+                if error.errno not in {
+                    errno.EEXIST,
+                    errno.EISDIR,
+                    errno.ENAMETOOLONG,
+                    errno.ENOTDIR,
+                }:
+                    raise
+                public_path, dest_path = self._hashed_remote_asset(
+                    url,
+                    parsed_url,
+                )
+                self._write_remote_asset(dest_path, content)
         
-        return parsed_url.path  
+        return public_path
+
+    def _hashed_remote_asset(self, url, parsed_url=None):
+        """Return a short, deterministic archive path for an internal asset."""
+        parsed_url = parsed_url or urlparse(url)
+        suffix = Path(unquote(parsed_url.path)).suffix.lower()
+        if not re.fullmatch(r'\.[a-z0-9]{1,10}', suffix):
+            suffix = ''
+        filename = f'{hashlib.sha256(str(url).encode()).hexdigest()}{suffix}'
+        public_path = f'/assets/remote/{filename}'
+        return public_path, concat_path(self.output_dir, public_path)
+
+    def _asset_path_is_usable(self, destination):
+        """Reject overlong components and file/directory prefix collisions."""
+        destination = Path(destination)
+        root = Path(self.output_dir)
+        try:
+            relative = destination.relative_to(root)
+        except ValueError:
+            return False
+
+        current = root
+        for part in relative.parts:
+            if len(os.fsencode(part)) > 255:
+                return False
+            current /= part
+            if current == destination and current.exists():
+                return current.is_file()
+            if current.exists() and not current.is_dir():
+                return False
+        return True
+
+    @staticmethod
+    def _write_remote_asset(destination, content):
+        """Atomically write a downloaded asset shared by concurrent workers."""
+        destination = Path(destination)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = None
+        try:
+            with NamedTemporaryFile(
+                mode='w+b',
+                dir=destination.parent,
+                prefix=f'.{destination.name}.',
+                delete=False,
+            ) as temporary:
+                temporary.write(content)
+                temporary_path = Path(temporary.name)
+            temporary_path.chmod(0o644)
+            temporary_path.replace(destination)
+        finally:
+            if temporary_path and temporary_path.exists():
+                temporary_path.unlink()
     
     def process_images(self, soup):
         for img in soup.find_all('img', {"src": True}):

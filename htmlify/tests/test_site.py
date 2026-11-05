@@ -9,6 +9,41 @@ from htmlify.tasks.sitemap import SiteMapTask
 
 class TestSiteTask(unittest.TestCase):
 
+    def test_asset_setup_preserves_downloaded_remote_files(self):
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            sites_root = root / 'sites'
+            shared_assets = root / 'shared-assets'
+            shared_assets.mkdir()
+            (shared_assets / 'style.css').write_text(
+                'body {}',
+                encoding='utf-8',
+            )
+            remote = (
+                sites_root
+                / 'africhthy.myspecies.info'
+                / 'assets'
+                / 'remote'
+                / 'asset.jpg'
+            )
+            remote.parent.mkdir(parents=True)
+            remote.write_bytes(b'image data')
+
+            with (
+                patch('htmlify.tasks.site.SITES_DIR', sites_root),
+                patch('htmlify.tasks.site.ASSETS_DIR', shared_assets),
+            ):
+                task = SiteTask(
+                    domain='africhthy.myspecies.info',
+                    platform_path='/tmp/scratchpads',
+                )
+                task.copy_across_assets()
+
+            self.assertEqual(remote.read_bytes(), b'image data')
+            self.assertTrue(
+                (remote.parents[1] / 'style.css').is_file()
+            )
+
     def test_requires_only_the_database_sitemap_and_does_not_propagate_force(
         self,
     ):

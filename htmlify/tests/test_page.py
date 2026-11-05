@@ -729,6 +729,69 @@ class TestPageContent(unittest.TestCase):
             'https://weevil.myspecies.info/modules/system.css'
         )
 
+    def test_overlong_missing_sites_asset_uses_hashed_archive_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            task = PageTask(
+                url='https://africhthy.myspecies.info/file/11678',
+                output_dir=Path(directory),
+            )
+            filename = f'fish-{"%25E0" * 60}.jpg'
+            source = (
+                '/sites/africhthy.org/files/styles/large/http/'
+                f'upload.wikimedia.org/commons/{filename}'
+            )
+
+            with (
+                patch(
+                    'htmlify.tasks.page.config.DRUPAL_FILES_MODE',
+                    'symlink',
+                ),
+                patch.object(
+                    task,
+                    '_request_url',
+                    return_value=b'image data',
+                ),
+            ):
+                archived = task.process_remote_file(source)
+
+            self.assertRegex(
+                archived,
+                r'^/assets/remote/[0-9a-f]{64}\.jpg$',
+            )
+            destination = Path(directory) / archived.lstrip('/')
+            self.assertEqual(destination.read_bytes(), b'image data')
+            self.assertLessEqual(len(destination.name.encode()), 255)
+
+    def test_asset_path_prefix_collision_uses_hashed_archive_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prefix = root / 'images' / 'fish.jpg'
+            prefix.parent.mkdir()
+            prefix.write_bytes(b'original image')
+            task = PageTask(
+                url='https://africhthy.myspecies.info/file/2836',
+                output_dir=root,
+            )
+
+            with patch.object(
+                task,
+                '_request_url',
+                return_value=b'thumbnail data',
+            ):
+                archived = task.process_remote_file(
+                    '/images/fish.jpg/thumbnail.png'
+                )
+
+            self.assertRegex(
+                archived,
+                r'^/assets/remote/[0-9a-f]{64}\.png$',
+            )
+            self.assertEqual(
+                (root / archived.lstrip('/')).read_bytes(),
+                b'thumbnail data',
+            )
+            self.assertEqual(prefix.read_bytes(), b'original image')
+
     def test_classification_redirect_is_archived(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

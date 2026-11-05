@@ -220,7 +220,7 @@ class SiteTask(BaseTask):
 
         dest_assets_dir.mkdir(parents=True, exist_ok=True)
         for child in dest_assets_dir.iterdir():
-            if child.name in {'facets', 'taxonomy'}:
+            if child.name in {'facets', 'remote', 'taxonomy'}:
                 continue
             if child.is_dir() and not child.is_symlink():
                 shutil.rmtree(child)
