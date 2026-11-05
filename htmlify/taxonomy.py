@@ -5,7 +5,93 @@ from tempfile import NamedTemporaryFile
 
 import phpserialize
 
+from htmlify import config
 from htmlify.db import db_manager
+
+
+TAXONOMY_LOOKUP_VERSION = 1
+TAXONOMY_LOOKUP_DIR = config.PROCESSING_DATA_DIR / 'taxonomy-lookups'
+
+
+def taxonomy_lookup_path(domain):
+    return TAXONOMY_LOOKUP_DIR / f'{domain}.json'
+
+
+@lru_cache(maxsize=None)
+def _read_taxonomy_lookup(domain):
+    """Read the shared lookup prepared before page workers are launched."""
+    path = taxonomy_lookup_path(domain)
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError, TypeError):
+        return None
+    if payload.get('version') != TAXONOMY_LOOKUP_VERSION:
+        return None
+    if not isinstance(payload.get('terms'), dict):
+        return None
+    return payload
+
+
+def prepare_taxonomy_lookup(domain, *, refresh_after=None):
+    """Write one term lookup for reuse by every page-worker process.
+
+    Luigi creates a new process for each PageTask, so Python's in-memory
+    caches cannot prevent every taxonomy page from reloading the complete
+    term table.  This small JSON file makes that site-level query happen once
+    per sitemap instead.
+    """
+    path = taxonomy_lookup_path(domain)
+    if path.is_file():
+        current = _read_taxonomy_lookup(domain)
+        fresh_enough = (
+            refresh_after is None
+            or path.stat().st_mtime >= float(refresh_after)
+        )
+        if current is not None and fresh_enough:
+            return current
+
+    biological_vids = get_biological_vids(domain)
+    rows = db_manager.fetch(
+        domain,
+        'SELECT tid, vid FROM taxonomy_term_data',
+    )
+    payload = {
+        'version': TAXONOMY_LOOKUP_VERSION,
+        'biological_vids': [int(vid) for vid in biological_vids],
+        'terms': {
+            str(int(tid)): int(vid)
+            for tid, vid in rows
+        },
+    }
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = None
+    try:
+        with NamedTemporaryFile(
+            mode='w',
+            encoding='utf-8',
+            dir=path.parent,
+            prefix=f'.{path.name}.',
+            delete=False,
+        ) as temporary:
+            json.dump(
+                payload,
+                temporary,
+                ensure_ascii=False,
+                separators=(',', ':'),
+            )
+            temporary_path = Path(temporary.name)
+        temporary_path.replace(path)
+    finally:
+        if temporary_path and temporary_path.exists():
+            temporary_path.unlink()
+
+    _read_taxonomy_lookup.cache_clear()
+    get_biological_terms.cache_clear()
+    get_term_vocabularies.cache_clear()
+    return payload
 
 
 @lru_cache(maxsize=None)
@@ -29,6 +115,16 @@ def get_biological_vids(domain):
 @lru_cache(maxsize=None)
 def get_biological_terms(domain):
     """Map biological term IDs to their vocabulary IDs for one site."""
+    if lookup := _read_taxonomy_lookup(domain):
+        biological_vids = {
+            int(vid) for vid in lookup.get('biological_vids', [])
+        }
+        return {
+            int(tid): int(vid)
+            for tid, vid in lookup['terms'].items()
+            if int(vid) in biological_vids
+        }
+
     vids = get_biological_vids(domain)
     if not vids:
         return {}
@@ -51,6 +147,12 @@ def biological_vid_for_term(domain, tid):
 @lru_cache(maxsize=None)
 def get_term_vocabularies(domain):
     """Map every term ID to its vocabulary ID for one site."""
+    if lookup := _read_taxonomy_lookup(domain):
+        return {
+            int(tid): int(vid)
+            for tid, vid in lookup['terms'].items()
+        }
+
     rows = db_manager.fetch(
         domain,
         '''

@@ -47,6 +47,7 @@ from htmlify.thumbnails import (
     create_missing_gallery_thumbnails,
     gallery_thumbnails_complete,
 )
+from htmlify.taxonomy import prepare_taxonomy_lookup
 
 
 STATIC_ARCHIVE_VERSION = '27'
@@ -686,6 +687,26 @@ class SiteTask(BaseTask):
         if MAX_PAGE_THRESHOLD and len(links) > MAX_PAGE_THRESHOLD:
             raise Exception(
                 f'Links exceed {MAX_PAGE_THRESHOLD} maximum {len(links)}'
+            )
+
+        if any(
+            re.match(
+                r'^(?:taxonomy|simpletaxonomy|nontaxonomy)/term/\d+',
+                str(link).lstrip('/'),
+            )
+            for link in links
+        ):
+            lookup_started = time.monotonic()
+            self._report_progress(
+                f'Preparing shared taxonomy lookup for {self.domain}'
+            )
+            prepare_taxonomy_lookup(
+                self.domain,
+                refresh_after=Path(self.input().path).stat().st_mtime,
+            )
+            self._report_progress(
+                f'Taxonomy lookup for {self.domain} ready in '
+                f'{time.monotonic() - lookup_started:.1f}s'
             )
 
         page_tasks = [

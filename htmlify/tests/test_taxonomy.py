@@ -3,12 +3,22 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from htmlify.taxonomy import get_term_vocabularies, write_taxonomy_index
+from htmlify.taxonomy import (
+    _read_taxonomy_lookup,
+    get_biological_terms,
+    get_biological_vids,
+    get_term_vocabularies,
+    prepare_taxonomy_lookup,
+    write_taxonomy_index,
+)
 
 
 class TestTaxonomyIndex(unittest.TestCase):
 
     def tearDown(self):
+        _read_taxonomy_lookup.cache_clear()
+        get_biological_terms.cache_clear()
+        get_biological_vids.cache_clear()
         get_term_vocabularies.cache_clear()
 
     def test_maps_all_terms_to_their_vocabulary(self):
@@ -42,6 +52,40 @@ class TestTaxonomyIndex(unittest.TestCase):
 
             self.assertEqual(destination.stat().st_mode & 0o777, 0o644)
             self.assertEqual(destination.parent.stat().st_mode & 0o777, 0o755)
+
+    def test_prepared_lookup_is_reused_without_database_queries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            lookup_dir = Path(directory)
+            with (
+                patch('htmlify.taxonomy.TAXONOMY_LOOKUP_DIR', lookup_dir),
+                patch(
+                    'htmlify.taxonomy.db_manager.fetch_one',
+                    return_value=(
+                        b'a:1:{i:198;i:1;}',
+                    ),
+                ),
+                patch(
+                    'htmlify.taxonomy.db_manager.fetch',
+                    return_value=[(1717, 198), (2498, 12)],
+                ) as fetch,
+            ):
+                prepare_taxonomy_lookup('example.org')
+                self.assertEqual(fetch.call_count, 1)
+
+                _read_taxonomy_lookup.cache_clear()
+                get_biological_terms.cache_clear()
+                get_term_vocabularies.cache_clear()
+                fetch.reset_mock()
+
+                self.assertEqual(
+                    get_biological_terms('example.org'),
+                    {1717: 198},
+                )
+                self.assertEqual(
+                    get_term_vocabularies('example.org'),
+                    {1717: 198, 2498: 12},
+                )
+                fetch.assert_not_called()
 
 
 if __name__ == '__main__':
