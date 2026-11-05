@@ -9,7 +9,7 @@ from htmlify import config
 from htmlify.db import db_manager
 
 
-TAXONOMY_LOOKUP_VERSION = 1
+TAXONOMY_LOOKUP_VERSION = 2
 TAXONOMY_LOOKUP_DIR = config.PROCESSING_DATA_DIR / 'taxonomy-lookups'
 
 
@@ -57,6 +57,40 @@ def prepare_taxonomy_lookup(domain, *, refresh_after=None):
         domain,
         'SELECT tid, vid FROM taxonomy_term_data',
     )
+    specimen_rows = db_manager.fetch(
+        domain,
+        'SELECT ti.tid, n.nid, n.title, ua.alias '
+        'FROM node n '
+        'INNER JOIN taxonomy_index ti ON ti.nid = n.nid '
+        'LEFT JOIN url_alias ua ON ua.source = CONCAT("node/", n.nid) '
+        "WHERE n.status = 1 AND n.type = 'specimen_observation' "
+        'ORDER BY ti.tid, n.title, n.nid, ua.alias',
+    )
+    specimens = {}
+    for tid, nid, title, alias in specimen_rows:
+        term_records = specimens.setdefault(str(int(tid)), {})
+        record = term_records.setdefault(str(int(nid)), {
+            'nid': int(nid),
+            'title': str(title or f'Specimen {nid}'),
+            'aliases': [],
+        })
+        if alias:
+            record['aliases'].append(str(alias))
+
+    specimen_payload = {}
+    for tid, records in specimens.items():
+        specimen_payload[tid] = []
+        for record in records.values():
+            aliases = list(dict.fromkeys(record.pop('aliases')))
+            record_path = f'/node/{record["nid"]}'
+            if aliases:
+                alias = min(aliases, key=lambda value: (len(value), value))
+                record_path = f'/{alias.lstrip("/")}'
+            specimen_payload[tid].append({
+                **record,
+                'path': record_path,
+            })
+
     payload = {
         'version': TAXONOMY_LOOKUP_VERSION,
         'biological_vids': [int(vid) for vid in biological_vids],
@@ -64,6 +98,7 @@ def prepare_taxonomy_lookup(domain, *, refresh_after=None):
             str(int(tid)): int(vid)
             for tid, vid in rows
         },
+        'specimens': specimen_payload,
     }
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -165,6 +200,14 @@ def get_term_vocabularies(domain):
 
 def vocabulary_for_term(domain, tid):
     return get_term_vocabularies(domain).get(int(tid))
+
+
+def specimen_records_for_term(domain, tid):
+    """Return cached published specimens, or None without a prepared lookup."""
+    lookup = _read_taxonomy_lookup(domain)
+    if lookup is None or 'specimens' not in lookup:
+        return None
+    return list(lookup['specimens'].get(str(int(tid)), []))
 
 
 def taxonomy_asset_url(vid):

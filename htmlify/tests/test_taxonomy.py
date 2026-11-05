@@ -9,6 +9,7 @@ from htmlify.taxonomy import (
     get_biological_vids,
     get_term_vocabularies,
     prepare_taxonomy_lookup,
+    specimen_records_for_term,
     write_taxonomy_index,
 )
 
@@ -66,11 +67,18 @@ class TestTaxonomyIndex(unittest.TestCase):
                 ),
                 patch(
                     'htmlify.taxonomy.db_manager.fetch',
-                    return_value=[(1717, 198), (2498, 12)],
+                    side_effect=[
+                        [(1717, 198), (2498, 12)],
+                        [
+                            (1717, 31, 'Specimen B', None),
+                            (1717, 30, 'Specimen A', 'long/specimen-a'),
+                            (1717, 30, 'Specimen A', 'specimen-a'),
+                        ],
+                    ],
                 ) as fetch,
             ):
                 prepare_taxonomy_lookup('example.org')
-                self.assertEqual(fetch.call_count, 1)
+                self.assertEqual(fetch.call_count, 2)
 
                 _read_taxonomy_lookup.cache_clear()
                 get_biological_terms.cache_clear()
@@ -84,6 +92,21 @@ class TestTaxonomyIndex(unittest.TestCase):
                 self.assertEqual(
                     get_term_vocabularies('example.org'),
                     {1717: 198, 2498: 12},
+                )
+                self.assertEqual(
+                    specimen_records_for_term('example.org', 1717),
+                    [
+                        {
+                            'nid': 31,
+                            'title': 'Specimen B',
+                            'path': '/node/31',
+                        },
+                        {
+                            'nid': 30,
+                            'title': 'Specimen A',
+                            'path': '/specimen-a',
+                        },
+                    ],
                 )
                 fetch.assert_not_called()
 

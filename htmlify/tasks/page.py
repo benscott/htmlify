@@ -17,6 +17,9 @@ from urllib.parse import parse_qs, unquote
 from collections import OrderedDict
 import json
 import html
+import sys
+import threading
+import traceback
 from tempfile import NamedTemporaryFile
 
 # from selenium import webdriver 
@@ -71,6 +74,7 @@ from htmlify.exposed_views import (
 )
 from htmlify.taxonomy import (
     biological_vid_for_term,
+    specimen_records_for_term,
     taxonomy_asset_url,
     vocabulary_for_term,
     write_taxonomy_index,
@@ -113,8 +117,43 @@ class PageTask(BaseTask):
         self.domain = self._url.domain               
 
     def run(self):
+        """Render a page and report a useful traceback if it runs unusually long."""
+        self._current_stage = 'starting'
+        worker_thread = threading.get_ident()
+
+        def report_slow_page():
+            elapsed = config.SLOW_PAGE_WARNING
+            message = (
+                f'[htmlify] SLOW PAGE after {elapsed:g}s: {self.url} '
+                f'(stage: {self._current_stage})'
+            )
+            print(message, file=sys.stderr, flush=True)
+            logger.warning(message)
+            frame = sys._current_frames().get(worker_thread)
+            if frame is not None:
+                traceback.print_stack(frame, file=sys.stderr)
+
+        timer = None
+        if config.SLOW_PAGE_WARNING > 0:
+            timer = threading.Timer(
+                config.SLOW_PAGE_WARNING,
+                report_slow_page,
+            )
+            timer.daemon = True
+            timer.start()
+        try:
+            return self._run_page()
+        finally:
+            if timer is not None:
+                timer.cancel()
+
+    def _stage(self, value):
+        self._current_stage = value
+
+    def _run_page(self):
         # # self.subdomain = parsed_url.netloc.replace('myspecies.info', '')
 
+        self._stage('fetching source HTML')
         try:
             if self._classification_vid():
                 response = request(self.url)
@@ -136,6 +175,7 @@ class PageTask(BaseTask):
         if soup.find('h1', string="Technical difficulties"):
             raise Exception("Technical difficulties")
 
+        self._stage('analysing Drupal page configuration')
         drupal_facet_definitions = (
             configured_facet_definitions(self._url.path)
             if not self._is_search_page() else []
@@ -159,6 +199,7 @@ class PageTask(BaseTask):
             if species_tid else None
         )
         if species_vid:
+            self._stage('combining species-page tabs')
             self.species_page(soup, species_tid, species_vid)
 
         facet_definitions = []
@@ -193,12 +234,15 @@ class PageTask(BaseTask):
             return
 
         if self._is_tinytax(soup):
+            self._stage('building static taxonomy tree')
             self.process_tinytax(soup)
 
         if self._is_slickgrid(soup):
+            self._stage('expanding SlickGrid results')
             soup = self._load_slickgrid(soup)
 
         if is_facet_page:
+            self._stage('building faceted-page index')
             self.facet_page(soup, facet_definitions, result_hints)
 
         # Ordinary Drupal Views can expose database-backed filters without
@@ -206,6 +250,7 @@ class PageTask(BaseTask):
         # assets and links, then make the rendered form work client-side.
         exposed_view_count = 0
         if not species_vid and not is_facet_page:
+            self._stage('expanding exposed View results')
             exposed_view_count = staticize_exposed_views(soup, self.url)
 
         # CAPTCHA challenges cannot work in a static archive. Remove them
@@ -215,11 +260,13 @@ class PageTask(BaseTask):
         self.remove_clustrmaps(soup)
         self.replace_simplenews_blocks(soup)
 
+        self._stage('archiving page assets')
         self.process_css_style_urls(soup)
         self.process_css(soup)
         self.process_js(soup)
         self.process_images(soup)
 
+        self._stage('rewriting page links and controls')
         self.replace_login(soup)
         self.process_links(soup)
         self.replace_search(soup)
@@ -267,6 +314,7 @@ class PageTask(BaseTask):
             soup.html['data-htmlify-page-version'] = PAGE_ARCHIVE_VERSION
             soup.html['data-htmlify-domain'] = self.domain
 
+        self._stage('writing static HTML')
         self.parsed_path.mkdir(parents=True, exist_ok=True)
 
         logger.debug(f"Saving page to {self.output().path}")
@@ -281,6 +329,7 @@ class PageTask(BaseTask):
         # Luigi dynamic dependencies can otherwise loop forever when run()
         # writes output which complete() still rejects. Fail the page once
         # with the recorded completion reason instead.
+        self._stage('validating generated page')
         if not self.force and not self.complete():
             reason = getattr(
                 self,
@@ -759,6 +808,10 @@ class PageTask(BaseTask):
 
     def _specimen_records(self, tid):
         """Return published specimen nodes assigned to a taxonomy term."""
+        cached_records = specimen_records_for_term(self.domain, tid)
+        if cached_records is not None:
+            return cached_records
+
         try:
             rows = db_manager.fetch(
                 self.domain,
