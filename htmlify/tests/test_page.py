@@ -792,6 +792,42 @@ class TestPageContent(unittest.TestCase):
             )
             self.assertEqual(prefix.read_bytes(), b'original image')
 
+    def test_incomplete_drupal_style_image_is_removed_without_request(self):
+        with tempfile.TemporaryDirectory() as directory:
+            task = PageTask(
+                url='https://tachinidae.myspecies.info/gallery',
+                output_dir=Path(directory),
+            )
+            soup = BeautifulSoup(
+                '<div><img alt="Missing specimen" '
+                'src="/sites/tachinidae.myspecies.info/files/styles/'
+                'square_thumbnail/public"></div>',
+                'html.parser',
+            )
+
+            with patch.object(task, '_request_url') as request_url:
+                task.process_images(soup)
+
+            request_url.assert_not_called()
+            self.assertIsNone(soup.find('img'))
+
+    def test_redirecting_internal_asset_does_not_fail_page_processing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            task = PageTask(
+                url='https://tachinidae.myspecies.info/gallery',
+                output_dir=Path(directory),
+            )
+            with patch.object(
+                task,
+                '_request_url',
+                side_effect=requests.TooManyRedirects(
+                    'Exceeded 30 redirects',
+                ),
+            ):
+                self.assertIsNone(
+                    task.process_remote_file('/images/broken-thumbnail.jpg')
+                )
+
     def test_classification_redirect_is_archived(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

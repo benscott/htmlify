@@ -874,9 +874,12 @@ def _file_thumbnail_url(domain, uri, file_type, filename):
     if not is_image:
         return None
     if uri.startswith('public://'):
+        source_path = uri[len('public://'):].lstrip('/')
+        if not source_path:
+            return None
         relative_path = (
             'public/'
-            + quote(uri[len('public://'):].lstrip('/'), safe='/')
+            + quote(source_path, safe='/')
         )
     elif uri.startswith(('http://', 'https://')):
         # Drupal's image-style stream wrapper stores remote derivatives below

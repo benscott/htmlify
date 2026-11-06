@@ -331,6 +331,16 @@ class TestFacetIndex(unittest.TestCase):
             'media.php%3Fenv%3Dbotany%26irn%3D42',
         )
 
+    def test_empty_public_file_uri_has_no_thumbnail(self):
+        self.assertIsNone(
+            _file_thumbnail_url(
+                'tachinidae.myspecies.info',
+                'public://',
+                'image',
+                'missing.jpg',
+            )
+        )
+
     def test_media_database_records_include_archived_thumbnail_urls(self):
         facets = [
             {

@@ -143,6 +143,14 @@ class PageTask(BaseTask):
             timer.start()
         try:
             return self._run_page()
+        except Exception as error:
+            message = (
+                f'[htmlify] PAGE FAILED: {self.url} — '
+                f'{type(error).__name__}: {error}'
+            )
+            print(message, file=sys.stderr, flush=True)
+            logger.error(message, exc_info=True)
+            raise
         finally:
             if timer is not None:
                 timer.cancel()
@@ -1547,6 +1555,20 @@ class PageTask(BaseTask):
         # we'll keep the url exactly the same 
         if not is_internal_url(url, self.domain):
             return False
+
+        # A valid Drupal image-style URL must contain a file path after its
+        # stream-wrapper segment. Some old file records contain only
+        # ``public://`` and Drupal redirects the resulting .../public URL
+        # indefinitely. Treat it as an unavailable asset without requesting
+        # it thirty times.
+        if re.search(
+            r'/files/styles/[^/]+/(?:public|private|temporary)/?$',
+            parsed_url.path,
+        ):
+            logger.warning(
+                f'Ignoring incomplete Drupal image-style URL {url}'
+            )
+            return None
         
         if parsed_url.netloc.startswith('www'):
             url = url.replace('www.', '')
@@ -1587,7 +1609,11 @@ class PageTask(BaseTask):
 
         try:
             content = self._request_url(url)
-        except requests.exceptions.HTTPError:
+        except requests.exceptions.RequestException as error:
+            logger.warning(
+                f'Could not archive asset {url}: '
+                f'{type(error).__name__}: {error}'
+            )
             return None
         else:
             try:
@@ -1660,9 +1686,14 @@ class PageTask(BaseTask):
                 temporary_path.unlink()
     
     def process_images(self, soup):
-        for img in soup.find_all('img', {"src": True}):
-            if rel_path := self.process_remote_file(img['src']):
+        for img in list(soup.find_all('img', {"src": True})):
+            rel_path = self.process_remote_file(img['src'])
+            if rel_path:
                 img['src'] = rel_path  
+            elif rel_path is None:
+                # The source is internal but unavailable. Keeping it would
+                # leave a broken image (or redirect loop) in the archive.
+                img.decompose()
 
     def _request_url(self, url):        
         # If it doesn;t start with a domain, download it
