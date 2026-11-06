@@ -104,6 +104,9 @@ class MigrateTask(BaseTask):
             # keeps --limit accurate and avoids requiring counts for the
             # deliberately excluded tranche.
             df = df[df.platform_path.notnull()]
+            df = df[
+                ~df.resolved_domain.isin(config.NON_SCRATCHPAD_DOMAINS)
+            ]
             df = df[~df.resolved_domain.isin(self.tranche_1_domains)]
             complete = df.resolved_domain.map(self.archive_is_complete)
             complete_count = int(complete.sum())

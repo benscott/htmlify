@@ -381,7 +381,11 @@ def sitemaps(
     domain_column = 'resolved_domain' if 'resolved_domain' in sites else 'domain'
     if 'platform_path' in sites:
         sites = sites[sites.platform_path.notnull()]
-    domains = [str(value) for value in sites[domain_column].dropna().unique()]
+    domains = [
+        str(value)
+        for value in sites[domain_column].dropna().unique()
+        if str(value) not in config.NON_SCRATCHPAD_DOMAINS
+    ]
     if domain:
         if domain not in domains:
             raise typer.BadParameter(f'No registered site matching {domain}')

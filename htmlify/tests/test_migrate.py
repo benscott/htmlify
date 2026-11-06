@@ -148,6 +148,45 @@ class TestMigrationOrdering(unittest.TestCase):
             ['bravo.myspecies.info', 'charlie.myspecies.info'],
         )
 
+    def test_non_scratchpads_do_not_require_sitemaps_for_url_ordering(self):
+        sites = self.sites()
+        sites['platform_path'] = '/var/aegir/platforms/scratchpads'
+        sites.loc[len(sites)] = {
+            'domain': 'stats.myspecies.info',
+            'resolved_domain': 'stats.myspecies.info',
+            'platform_path': '/var/aegir/platforms/stats',
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            processing = Path(directory)
+            sitemap_dir = processing / 'sitemaps'
+            sitemap_dir.mkdir()
+            for domain in self.sites().resolved_domain:
+                (sitemap_dir / f'{domain}.yaml').write_text(
+                    '- node/1\n',
+                    encoding='utf-8',
+                )
+
+            task = MigrateTask(
+                domain=None,
+                platform_path=None,
+                sort_by='url-count',
+                sort_order='asc',
+            )
+            with (
+                patch(
+                    'htmlify.tasks.migrate.config.PROCESSING_DATA_DIR',
+                    processing,
+                ),
+                patch.object(task, 'archive_is_complete', return_value=False),
+            ):
+                selected = task.select_sites(sites)
+
+        self.assertNotIn(
+            'stats.myspecies.info',
+            selected.resolved_domain.tolist(),
+        )
+
 
 class TestMigrationCommand(unittest.TestCase):
 

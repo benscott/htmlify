@@ -6,6 +6,7 @@ import yaml
 import pandas as pd
 
 
+from htmlify import config
 from htmlify.config import DATA_DIR, PROCESSING_DATA_DIR, logger
 from htmlify.tasks.base import BaseExternalTask, BaseTask
 
@@ -31,6 +32,12 @@ class SitesListTask(BaseExternalTask):
         # Remove any non-myspecies.info sites
         df = df[df.resolved_domain.str.contains('myspecies.info')]
 
+        # A small number of hosted services have myspecies.info aliases but
+        # are not Drupal Scratchpads and cannot produce htmlify sitemaps.
+        df = df[
+            ~df.resolved_domain.isin(config.NON_SCRATCHPAD_DOMAINS)
+        ]
+
         logger.info(f'{len(df)} sites')
         df.to_csv(self.output().path, index=False)
 
@@ -43,4 +50,4 @@ class SitesListTask(BaseExternalTask):
 
 if __name__ == "__main__":    
     domain = '127.0.0.1'
-    luigi.build([SitesListTask(force=True)], local_scheduler=True)    
+    luigi.build([SitesListTask(force=True)], local_scheduler=True)

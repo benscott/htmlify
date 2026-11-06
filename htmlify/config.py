@@ -62,6 +62,13 @@ WRITE_APACHE_VHOSTS = os.getenv('WRITE_APACHE_VHOSTS', '1').lower() not in {
 
 CRAWL_SITES = False
 
+# Hosted records which use Scratchpads infrastructure/domain aliases but are
+# not actual Scratchpads sites and therefore cannot be archived by htmlify.
+NON_SCRATCHPAD_DOMAINS = frozenset({
+    'stats.myspecies.info',
+    'vbrant.myspecies.info',
+})
+
 
 def configure_local_source(
     *,
