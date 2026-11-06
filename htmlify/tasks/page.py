@@ -158,6 +158,36 @@ class PageTask(BaseTask):
     def _stage(self, value):
         self._current_stage = value
 
+    @staticmethod
+    def _request_error_detail(error):
+        """Extract a short useful message from an HTTP failure response."""
+        response = getattr(error, 'response', None)
+        if response is None:
+            detail = re.sub(r'\s+', ' ', str(error)).strip()
+            return detail[:500] if detail else type(error).__name__
+
+        body = getattr(response, 'text', '')
+        detail = ''
+        if isinstance(body, str) and body.strip():
+            response_soup = BeautifulSoup(body, features='html.parser')
+            message = response_soup.select_one(
+                '.messages.error, .messages--error, '
+                '#messages .error, [role="alert"], h1, title'
+            )
+            detail = (
+                message.get_text(' ', strip=True)
+                if message is not None
+                else response_soup.get_text(' ', strip=True)
+            )
+
+        if not detail:
+            reason = getattr(response, 'reason', '')
+            detail = reason if isinstance(reason, str) else ''
+        detail = re.sub(r'\s+', ' ', detail).strip()
+        if len(detail) > 500:
+            detail = f'{detail[:497]}...'
+        return detail
+
     def _run_page(self):
         # # self.subdomain = parsed_url.netloc.replace('myspecies.info', '')
 
@@ -173,12 +203,55 @@ class PageTask(BaseTask):
                 soup = BeautifulSoup(response.text, features='html.parser')
             else:
                 soup = get_soup(self.url)
-        except requests.HTTPError as error:
-            status_code = getattr(error.response, 'status_code', None)
+        except requests.RequestException as error:
+            status_code = getattr(
+                getattr(error, 'response', None),
+                'status_code',
+                None,
+            )
             if status_code in {401, 403, 404, 410}:
                 self._mark_skipped(f'HTTP {status_code}')
                 return
-            raise
+            page_path = (self._url.path or '/').rstrip('/') or '/'
+            if (
+                (status_code is None or 500 <= status_code < 600)
+                and page_path != '/'
+            ):
+                initial_detail = self._request_error_detail(error)
+                initial_label = (
+                    f'HTTP {status_code}'
+                    if status_code is not None
+                    else type(error).__name__
+                )
+                logger.warning(
+                    f'{self.url} returned {initial_label}; retrying once '
+                    'without the response cache'
+                    + (f': {initial_detail}' if initial_detail else '')
+                )
+                try:
+                    soup = get_soup(self.url, cached=False)
+                except requests.RequestException as retry_error:
+                    retry_status = getattr(
+                        getattr(retry_error, 'response', None),
+                        'status_code',
+                        None,
+                    )
+                    retry_detail = self._request_error_detail(retry_error)
+                    retry_label = (
+                        f'HTTP {retry_status}'
+                        if retry_status is not None
+                        else type(retry_error).__name__
+                    )
+                    reason = f'{retry_label} after retry'
+                    if retry_detail:
+                        reason += f': {retry_detail}'
+                    logger.warning(
+                        f'Skipping unavailable page {self.url}: {reason}'
+                    )
+                    self._mark_skipped(reason)
+                    return
+            else:
+                raise
 
         if soup.find('h1', string="Technical difficulties"):
             raise Exception("Technical difficulties")
@@ -514,7 +587,7 @@ class PageTask(BaseTask):
             f'{self.url}\n{reason}\n',
             encoding='utf-8',
         )
-        logger.info(f'Skipping empty page {self.url}: {reason}')
+        logger.info(f'Skipping page {self.url}: {reason}')
 
     def complete(self):
         if self.force:
@@ -1123,6 +1196,17 @@ class PageTask(BaseTask):
         term_path=None,
         block=None,
     ):
+        # Every biological term page depends on this shared index, including
+        # themes which do not render a TinyTax block. Write it before looking
+        # for page markup so complete() cannot reject an otherwise valid
+        # species page merely because its theme omitted the block.
+        destination = (
+            Path(self.output_dir)
+            / taxonomy_asset_url(vid).lstrip('/')
+        )
+        if self.force or not destination.exists():
+            write_taxonomy_index(self.domain, vid, destination)
+
         if block is None:
             candidates = soup.select(
                 'section.block-tinytax, section.htmlify-taxonomy-tree'
@@ -1140,20 +1224,40 @@ class PageTask(BaseTask):
                 candidates[0] if candidates else None,
             )
         if not block:
-            return
+            block = soup.new_tag(
+                'section',
+                id=f'block-tinytax-{int(vid)}',
+            )
+            block['class'] = [
+                'block',
+                'htmlify-taxonomy-tree',
+                'htmlify-taxonomy-tree-fallback',
+            ]
+            content = soup.new_tag('div')
+            content['class'] = ['content']
+            block.append(content)
+
+            sidebar = (
+                soup.select_one('#region-sidebar-first .region-inner')
+                or soup.select_one('#region-sidebar-first')
+                or soup.select_one('.region-sidebar-first .region-inner')
+                or soup.select_one('.region-sidebar-first')
+            )
+            content_region = soup.select_one('#region-content')
+            if sidebar:
+                sidebar.append(block)
+            elif content_region:
+                content_region.insert(0, block)
+            elif soup.body:
+                soup.body.insert(0, block)
+            else:
+                soup.append(block)
 
         term_path = (
             term_path
             or block.get('data-term-path')
             or self._tinytax_term_path(block)
         )
-
-        destination = (
-            Path(self.output_dir)
-            / taxonomy_asset_url(vid).lstrip('/')
-        )
-        if self.force or not destination.exists():
-            write_taxonomy_index(self.domain, vid, destination)
 
         classes = [
             name for name in block.get('class', [])

@@ -929,6 +929,99 @@ class TestPageContent(unittest.TestCase):
             finally:
                 config.PROCESSING_DATA_DIR = original_processing_dir
 
+    def test_repeated_server_error_on_non_homepage_is_skipped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original_processing_dir = config.PROCESSING_DATA_DIR
+            config.PROCESSING_DATA_DIR = root / 'processing'
+            response = Mock(
+                status_code=500,
+                text=(
+                    '<html><body><div class="messages error">'
+                    'Contact module configuration is invalid.'
+                    '</div></body></html>'
+                ),
+            )
+            error = requests.HTTPError(
+                '500 Server Error',
+                response=response,
+            )
+            try:
+                task = PageTask(
+                    url='https://cusucobeetles.myspecies.info/contact',
+                    output_dir=root / 'site',
+                )
+                with patch(
+                    'htmlify.tasks.page.get_soup',
+                    side_effect=[error, error],
+                ) as get_soup:
+                    task._run_page()
+
+                self.assertEqual(get_soup.call_count, 2)
+                self.assertEqual(
+                    get_soup.call_args_list[1].kwargs,
+                    {'cached': False},
+                )
+                self.assertTrue(task.complete())
+                self.assertIn(
+                    'HTTP 500 after retry: '
+                    'Contact module configuration is invalid.',
+                    task.skipped_path.read_text(),
+                )
+            finally:
+                config.PROCESSING_DATA_DIR = original_processing_dir
+
+    def test_server_error_on_homepage_still_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            response = Mock(status_code=500)
+            error = requests.HTTPError(
+                '500 Server Error',
+                response=response,
+            )
+            task = PageTask(
+                url='https://cusucobeetles.myspecies.info',
+                output_dir=Path(directory),
+            )
+            with (
+                patch('htmlify.tasks.page.get_soup', side_effect=error) as get_soup,
+                self.assertRaises(requests.HTTPError),
+            ):
+                task._run_page()
+
+            get_soup.assert_called_once_with(task.url)
+
+    def test_empty_reply_on_non_homepage_is_retried_then_skipped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original_processing_dir = config.PROCESSING_DATA_DIR
+            config.PROCESSING_DATA_DIR = root / 'processing'
+            error = requests.ConnectionError(
+                'Remote end closed connection without response',
+            )
+            try:
+                task = PageTask(
+                    url='https://cusucobeetles.myspecies.info/contact',
+                    output_dir=root / 'site',
+                )
+                with patch(
+                    'htmlify.tasks.page.get_soup',
+                    side_effect=[error, error],
+                ) as get_soup:
+                    task._run_page()
+
+                self.assertEqual(get_soup.call_count, 2)
+                self.assertEqual(
+                    get_soup.call_args_list[1].kwargs,
+                    {'cached': False},
+                )
+                self.assertIn(
+                    'ConnectionError after retry: '
+                    'Remote end closed connection without response',
+                    task.skipped_path.read_text(),
+                )
+            finally:
+                config.PROCESSING_DATA_DIR = original_processing_dir
+
 
 class TestFacetSearch(unittest.TestCase):
 
@@ -1147,6 +1240,49 @@ class TestSpeciesPage(unittest.TestCase):
         )
         write_index.assert_called_once()
 
+    def test_species_page_without_tinytax_gets_fallback_tree_and_index(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            task = PageTask(
+                url='https://neasianflora.myspecies.info/taxonomy/term/8',
+                output_dir=root,
+            )
+            soup = BeautifulSoup(
+                '''
+                <html><body>
+                  <div id="region-content" class="region region-content">
+                    <h1>Species without TinyTax</h1>
+                    <article>A species description.</article>
+                  </div>
+                </body></html>
+                ''',
+                'html.parser',
+            )
+
+            with patch(
+                'htmlify.tasks.page.write_taxonomy_index',
+            ) as write_index:
+                task.species_page(soup, 8, 4)
+
+            expected_index = root / 'assets' / 'taxonomy' / '4.json'
+            write_index.assert_called_once_with(
+                'neasianflora.myspecies.info',
+                4,
+                expected_index,
+            )
+            tree = soup.select_one('.htmlify-taxonomy-tree-fallback')
+            self.assertIsNotNone(tree)
+            self.assertEqual(tree['data-index-url'], '/assets/taxonomy/4.json')
+            self.assertEqual(tree['data-current-tid'], '8')
+            self.assertEqual(tree['data-term-path'], '/taxonomy/term')
+            self.assertIsNotNone(tree.select_one('.htmlify-taxonomy-search'))
+            self.assertIsNotNone(
+                soup.find(
+                    'script',
+                    src=f'/assets/species-page.js?v={STATIC_ASSET_VERSION}',
+                )
+            )
+
     def test_expands_slickgrid_before_copying_a_species_tab(self):
         task = PageTask(
             url='https://abrusinthailand.myspecies.info/taxonomy/term/74',
@@ -1189,6 +1325,7 @@ class TestSpeciesPage(unittest.TestCase):
                 'htmlify.tasks.page.request_json',
                 return_value={'data': [{'Title': 'Specimen one', 'ID': '42'}]},
             ) as request_grid,
+            patch('htmlify.tasks.page.write_taxonomy_index'),
         ):
             task.species_page(soup, 74, 3)
 
@@ -1250,6 +1387,7 @@ class TestSpeciesPage(unittest.TestCase):
             patch('htmlify.tasks.page.get_soup', return_value=specimens),
             patch('htmlify.tasks.page.db_manager.fetch', side_effect=fetch),
             patch('htmlify.tasks.page.request_json') as request_grid,
+            patch('htmlify.tasks.page.write_taxonomy_index'),
         ):
             task.species_page(soup, 74, 3)
 
