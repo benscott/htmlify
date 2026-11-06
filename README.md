@@ -166,7 +166,42 @@ uv run python -m unittest discover -s htmlify/tests
 
 ## Apache
 
-https://www.digitalocean.com/community/tutorials/how-to-install-the-apache-web-server-on-ubuntu-22-04
+Keep the operational scripts in the repository's `scripts` directory. On the
+archive server this will normally be `/home/a-bens3/htmlify/scripts`; they do
+not need to be installed globally.
+
+Preview every directory under `/var/www/new` and whether its matching Apache
+configuration exists and is enabled:
+
+```bash
+cd /home/a-bens3/htmlify
+./scripts/list-static-apache-sites.sh
+```
+
+Enable every available matching configuration, run `apache2ctl configtest`,
+and reload Apache once after the configuration passes:
+
+```bash
+cd /home/a-bens3/htmlify
+./scripts/enable-static-apache-sites.sh
+```
+
+Both scripts accept optional site and Apache configuration directories. For
+example:
+
+```bash
+./scripts/list-static-apache-sites.sh \
+  /var/www/new \
+  /etc/apache2/sites-available \
+  /etc/apache2/sites-enabled
+
+./scripts/enable-static-apache-sites.sh \
+  /var/www/new \
+  /etc/apache2/sites-available
+```
+
+The enable script never disables sites and will not reload Apache if
+`apache2ctl configtest` fails.
 
 ## MYSQL
 
