@@ -13,7 +13,7 @@ from htmlify.db import db_manager
 from htmlify.taxonomy import get_biological_vids
 
 
-SITEMAP_VERSION = '6'
+SITEMAP_VERSION = '7'
 
 class SiteMapTask(BaseTask):
     
@@ -40,6 +40,7 @@ class SiteMapTask(BaseTask):
     excluded_path_parts = {
         'ajax',
         'autocomplete',
+        'export',
         'nojs',
         'preview',
     }

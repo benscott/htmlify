@@ -21,6 +21,7 @@ class TestSiteMapRoutes(unittest.TestCase):
             'biblio/import',
             'taxonomy/term/%/csv',
             'dwca-export/reference/csv',
+            'character-editor/export/txt',
             'search/ajax/results',
             'user/33',
             'news/feed',
