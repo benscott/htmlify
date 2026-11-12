@@ -162,6 +162,10 @@ class PageTask(BaseTask):
     @staticmethod
     def _request_error_detail(error):
         """Extract a short useful message from an HTTP failure response."""
+        if isinstance(error, requests.TooManyRedirects):
+            detail = re.sub(r'\s+', ' ', str(error)).strip()
+            return detail[:500] if detail else 'redirect loop'
+
         response = getattr(error, 'response', None)
         if response is None:
             detail = re.sub(r'\s+', ' ', str(error)).strip()
@@ -214,13 +218,20 @@ class PageTask(BaseTask):
                 self._mark_skipped(f'HTTP {status_code}')
                 return
             page_path = (self._url.path or '/').rstrip('/') or '/'
+            redirect_loop = isinstance(error, requests.TooManyRedirects)
             if (
-                (status_code is None or 500 <= status_code < 600)
+                (
+                    redirect_loop
+                    or status_code is None
+                    or 500 <= status_code < 600
+                )
                 and page_path != '/'
             ):
                 initial_detail = self._request_error_detail(error)
                 initial_label = (
-                    f'HTTP {status_code}'
+                    type(error).__name__
+                    if redirect_loop
+                    else f'HTTP {status_code}'
                     if status_code is not None
                     else type(error).__name__
                 )
@@ -238,8 +249,14 @@ class PageTask(BaseTask):
                         None,
                     )
                     retry_detail = self._request_error_detail(retry_error)
+                    retry_redirect_loop = isinstance(
+                        retry_error,
+                        requests.TooManyRedirects,
+                    )
                     retry_label = (
-                        f'HTTP {retry_status}'
+                        type(retry_error).__name__
+                        if retry_redirect_loop
+                        else f'HTTP {retry_status}'
                         if retry_status is not None
                         else type(retry_error).__name__
                     )

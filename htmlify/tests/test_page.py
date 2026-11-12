@@ -1048,6 +1048,62 @@ class TestPageContent(unittest.TestCase):
 
             get_soup.assert_called_once_with(task.url)
 
+    def test_redirect_loop_on_non_homepage_is_retried_then_skipped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original_processing_dir = config.PROCESSING_DATA_DIR
+            config.PROCESSING_DATA_DIR = root / 'processing'
+            response = Mock(status_code=302, text='', reason='Found')
+            error = requests.TooManyRedirects(
+                'Exceeded 30 redirects',
+                response=response,
+            )
+            try:
+                task = PageTask(
+                    url='https://biotalent.myspecies.info/node/35',
+                    output_dir=root / 'site',
+                )
+                with patch(
+                    'htmlify.tasks.page.get_soup',
+                    side_effect=[error, error],
+                ) as get_soup:
+                    task._run_page()
+
+                self.assertEqual(get_soup.call_count, 2)
+                self.assertEqual(
+                    get_soup.call_args_list[1].kwargs,
+                    {'cached': False},
+                )
+                self.assertTrue(task.complete())
+                self.assertIn(
+                    'TooManyRedirects after retry: Exceeded 30 redirects',
+                    task.skipped_path.read_text(),
+                )
+            finally:
+                config.PROCESSING_DATA_DIR = original_processing_dir
+
+    def test_redirect_loop_on_homepage_still_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            response = Mock(status_code=302, text='', reason='Found')
+            error = requests.TooManyRedirects(
+                'Exceeded 30 redirects',
+                response=response,
+            )
+            task = PageTask(
+                url='https://biotalent.myspecies.info',
+                output_dir=Path(directory),
+            )
+            with (
+                patch(
+                    'htmlify.tasks.page.get_soup',
+                    side_effect=error,
+                ) as get_soup,
+                self.assertRaises(requests.TooManyRedirects),
+            ):
+                task._run_page()
+
+            get_soup.assert_called_once_with(task.url)
+
     def test_empty_reply_on_non_homepage_is_retried_then_skipped(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
