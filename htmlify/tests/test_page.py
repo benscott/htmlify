@@ -305,7 +305,9 @@ class TestPageContent(unittest.TestCase):
             output.write_text(
                 '<html data-htmlify-page-version="1" '
                 'data-htmlify-domain="example.org"><body>'
-                '<div class="views-exposed-form"></div>'
+                '<div class="view view-id-people">'
+                '<form><div class="views-exposed-form"></div></form>'
+                '</div>'
                 '</body></html>',
                 encoding='utf-8',
             )
@@ -321,6 +323,37 @@ class TestPageContent(unittest.TestCase):
                 ),
             ):
                 self.assertFalse(task.complete())
+
+    def test_standalone_exposed_form_block_is_not_an_unconverted_view(self):
+        with tempfile.TemporaryDirectory() as directory:
+            task = PageTask(
+                url='https://cats.myspecies.info',
+                output_dir=Path(directory),
+            )
+            output = Path(task.output().path)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(
+                '<html data-htmlify-page-version="1" '
+                'data-htmlify-domain="cats.myspecies.info"><body>'
+                '<section class="block block-views">'
+                '<form action="/catalogue">'
+                '<div class="views-exposed-form"></div>'
+                '</form></section>'
+                '</body></html>',
+                encoding='utf-8',
+            )
+
+            with (
+                patch(
+                    'htmlify.tasks.page.configured_facet_definitions',
+                    return_value=[],
+                ),
+                patch(
+                    'htmlify.tasks.page.is_configured_facet_page',
+                    return_value=False,
+                ),
+            ):
+                self.assertTrue(task.complete())
 
     def test_static_exposed_view_requires_search_script(self):
         with tempfile.TemporaryDirectory() as directory:

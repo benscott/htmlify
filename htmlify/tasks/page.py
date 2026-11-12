@@ -70,6 +70,7 @@ from htmlify.facets import (
 )
 from htmlify.exposed_views import (
     EXPOSED_VIEW_VERSION,
+    exposed_views,
     staticize_exposed_views,
 )
 from htmlify.taxonomy import (
@@ -702,6 +703,7 @@ class PageTask(BaseTask):
             and 'views-exposed-form' in html
             and f'data-htmlify-exposed-view-version="{EXPOSED_VIEW_VERSION}"'
             not in html
+            and exposed_views(BeautifulSoup(html, features='html.parser'))
         ):
             return self._incomplete('exposed View has not been made static')
         if f'data-htmlify-exposed-view-version="{EXPOSED_VIEW_VERSION}"' in html:
