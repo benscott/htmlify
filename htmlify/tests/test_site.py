@@ -233,6 +233,58 @@ class TestSiteTask(unittest.TestCase):
                     target_is_directory=True,
                 )
 
+    def test_alias_colliding_with_sitemap_subtree_uses_index_symlink(self):
+        with TemporaryDirectory() as temporary_directory:
+            sites_root = Path(temporary_directory)
+            site_root = sites_root / 'osdl.myspecies.info'
+            target_index = site_root / 'node' / '3' / 'index.html'
+            target_index.parent.mkdir(parents=True)
+            target_index.write_text('alias target', encoding='utf-8')
+
+            alias_dir = site_root / 'osdl' / 'descriptors'
+            alias_dir.mkdir(parents=True)
+            (alias_dir / 'index.html').write_text(
+                'rendered route',
+                encoding='utf-8',
+            )
+            child_index = alias_dir / 'browse' / 'index.html'
+            child_index.parent.mkdir(parents=True)
+            child_index.write_text('child route', encoding='utf-8')
+
+            aliases = [('osdl/descriptors', 'node/3')]
+            sitemap_paths = [
+                'node/3',
+                'osdl/descriptors',
+                'osdl/descriptors/browse',
+            ]
+            with (
+                patch('htmlify.tasks.site.SITES_DIR', sites_root),
+                patch(
+                    'htmlify.tasks.site.get_site_aliases',
+                    return_value=aliases,
+                ),
+            ):
+                task = SiteTask(
+                    domain='osdl.myspecies.info',
+                    platform_path='/tmp/scratchpads',
+                )
+                task.create_site_aliases(sitemap_paths)
+
+                self.assertTrue(alias_dir.is_dir())
+                self.assertFalse(alias_dir.is_symlink())
+                self.assertTrue((alias_dir / 'index.html').is_symlink())
+                self.assertEqual(
+                    (alias_dir / 'index.html').resolve(),
+                    target_index.resolve(),
+                )
+                self.assertEqual(
+                    child_index.read_text(encoding='utf-8'),
+                    'child route',
+                )
+                self.assertTrue(
+                    task.site_aliases_complete(sitemap_paths)
+                )
+
     def test_alias_to_unpublished_node_is_not_created_or_required(self):
         with TemporaryDirectory() as temporary_directory:
             sites_root = Path(temporary_directory)

@@ -287,6 +287,15 @@ class SiteTask(BaseTask):
                 self.normalise_page_path(path)
                 for path in sitemap_paths
             }
+            sitemap_routes_and_parents = set(sitemap_paths)
+            for sitemap_path in sitemap_paths:
+                parts = Path(sitemap_path).parts
+                sitemap_routes_and_parents.update(
+                    str(Path(*parts[:length]))
+                    for length in range(1, len(parts))
+                )
+        else:
+            sitemap_routes_and_parents = set()
         # get_site_aliases() is ordered by pid ascending. Collapse duplicates
         # before checking targets so an unavailable newest row does not make
         # us incorrectly fall back to an older alias that Drupal would never
@@ -348,6 +357,15 @@ class SiteTask(BaseTask):
                 parent = str(Path(*parts[:length]))
                 if parent in mappings:
                     parent_aliases.add(parent)
+
+            # Menu links and Views can put an alias path into the sitemap as
+            # though it were a Drupal system route. PageTask will then have
+            # created a real directory at the alias path, possibly with
+            # archived child routes below it. Keep that directory and express
+            # the alias through its index.html instead of trying to replace
+            # the whole subtree with a directory symlink.
+            if alias in sitemap_routes_and_parents:
+                parent_aliases.add(alias)
 
         return mappings, parent_aliases, skipped_aliases
 
@@ -415,7 +433,13 @@ class SiteTask(BaseTask):
                 alias_dir.unlink()
             alias_dir.mkdir(parents=True, exist_ok=True)
             target_index = sites_dir / mappings[alias] / 'index.html'
-            self._ensure_symlink(alias_dir / 'index.html', target_index)
+            alias_index = alias_dir / 'index.html'
+            # A colliding sitemap route has a generated regular index file.
+            # Drupal's inbound URL alias wins for this exact public path, so
+            # replace only that generated file and retain any child routes.
+            if alias_index.exists() and not alias_index.is_symlink():
+                alias_index.unlink()
+            self._ensure_symlink(alias_index, target_index)
 
         for alias, target in mappings.items():
             if alias in parent_aliases:
