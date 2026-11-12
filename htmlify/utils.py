@@ -61,17 +61,24 @@ def _normalise_hostname(hostname):
 
 def is_internal_url(url, domain):
     """Return whether a URL belongs to the canonical site or local source."""
-    parsed = urlparse(url)
-    if not parsed.netloc:
-        return True
+    try:
+        parsed = urlparse(url)
+        if not parsed.netloc:
+            return True
 
-    hostname = _normalise_hostname(parsed.hostname)
-    if hostname == _normalise_hostname(domain):
-        return True
+        hostname = _normalise_hostname(parsed.hostname)
+        if hostname == _normalise_hostname(domain):
+            return True
 
-    if config.SOURCE_BASE_URL and domain == config.SOURCE_DOMAIN:
-        source_hostname = urlparse(config.SOURCE_BASE_URL).hostname
-        return hostname == _normalise_hostname(source_hostname)
+        if config.SOURCE_BASE_URL and domain == config.SOURCE_DOMAIN:
+            source_hostname = urlparse(config.SOURCE_BASE_URL).hostname
+            return hostname == _normalise_hostname(source_hostname)
+    except (TypeError, ValueError):
+        # Old Drupal content can contain unresolved tokens or otherwise
+        # malformed absolute hrefs (for example a bracketed non-IP host).
+        # They are not safe to rewrite as local archive paths, but should not
+        # prevent the rest of the page from being archived.
+        return False
 
     return False
 

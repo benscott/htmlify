@@ -591,6 +591,31 @@ class TestPageContent(unittest.TestCase):
             ['https://accounts.example.org/login'],
         )
 
+    def test_malformed_absolute_link_does_not_abort_link_processing(self):
+        task = PageTask(
+            url=(
+                'https://collectionsforall.myspecies.info/'
+                'simpletaxonomy/term/26'
+            ),
+            output_dir='/tmp/site',
+        )
+        soup = BeautifulSoup(
+            '''
+            <html><body>
+              <a href="https://[site:url]/user/login">Broken token link</a>
+              <a href="/node/12">Valid internal link</a>
+            </body></html>
+            ''',
+            'html.parser',
+        )
+
+        task.process_links(soup)
+
+        self.assertEqual(
+            [link['href'] for link in soup.find_all('a')],
+            ['https://[site:url]/user/login', '/node/12'],
+        )
+
     def test_page_with_internal_authentication_link_is_incomplete(self):
         with tempfile.TemporaryDirectory() as directory:
             task = PageTask(

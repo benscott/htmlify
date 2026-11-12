@@ -1473,10 +1473,13 @@ class PageTask(BaseTask):
                 a.decompose()
                 continue
 
-            url = URL(href, self.domain)
-
-            if not url.is_site_internal_link():
+            # Classify the raw href before constructing URL, whose strict
+            # parser correctly rejects malformed bracketed hostnames. Such
+            # legacy links are left untouched rather than aborting the page.
+            if not is_internal_url(href, self.domain):
                 continue
+
+            url = URL(href, self.domain)
 
             if biblio_facet_href := self._biblio_facet_href(href):
                 a['href'] = biblio_facet_href

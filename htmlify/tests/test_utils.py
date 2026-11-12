@@ -4,7 +4,23 @@ from unittest.mock import Mock, patch
 import requests
 
 from htmlify import config
-from htmlify.utils import SiteUnavailableError, is_under_maintenance, request
+from htmlify.utils import (
+    SiteUnavailableError,
+    is_internal_url,
+    is_under_maintenance,
+    request,
+)
+
+
+class TestInternalUrl(unittest.TestCase):
+
+    def test_invalid_bracketed_hostname_is_not_internal(self):
+        self.assertFalse(
+            is_internal_url(
+                'https://[site:url]/user/login',
+                'collectionsforall.myspecies.info',
+            )
+        )
 
 
 class TestMaintenanceCheck(unittest.TestCase):
