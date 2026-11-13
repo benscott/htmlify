@@ -286,12 +286,6 @@ class PageTask(BaseTask):
                 or is_configured_facet_page(self.domain, self._url.path)
             )
         )
-        if (
-            self._is_unavailable_search_page(soup)
-            and not configured_facet_page
-        ):
-            raise Exception('Empty search page - Search is temporarily unavailable')
-
         species_tid = self._species_term_id()
         species_vid = (
             biological_vid_for_term(self.domain, species_tid)
@@ -1449,6 +1443,15 @@ class PageTask(BaseTask):
             search_form['method'] = 'get'   
 
             input_tag = search_form.find('input', {'name': 'search_block_form'}) or search_form.find('input', {'name': 'keys'})
+            if input_tag is None:
+                input_tag = soup.new_tag(
+                    'input',
+                    attrs={
+                        'name': 'keys',
+                        'type': 'search',
+                    },
+                )
+                search_form.append(input_tag)
             input_tag['name'] = 'q'
 
             new_site_input = soup.new_tag('input', type='hidden')
@@ -1894,7 +1897,53 @@ class PageTask(BaseTask):
 
     def search_page(self, soup):
         if search_form := soup.find('form', id='search-form'):
-            self._update_search_form(search_form, soup) 
+            self._update_search_form(search_form, soup)
+        elif self._is_search_page():
+            search_form = soup.new_tag(
+                'form',
+                id='search-form',
+                attrs={'class': ['htmlify-archive-search']},
+            )
+            label = soup.new_tag('label', attrs={'for': 'htmlify-search-query'})
+            label.string = 'Search this archived site'
+            query = soup.new_tag(
+                'input',
+                id='htmlify-search-query',
+                attrs={
+                    'name': 'keys',
+                    'type': 'search',
+                },
+            )
+            submit = soup.new_tag('button', type='submit')
+            submit.string = 'Search'
+            search_form.extend([label, query, submit])
+            self._update_search_form(search_form, soup)
+
+            target = (
+                soup.select_one('#block-system-main .content')
+                or soup.select_one('#region-content')
+                or soup.select_one('section#section-content')
+                or soup.body
+            )
+            if target:
+                target.append(search_form)
+
+        if self._is_search_page():
+            unavailable_message = 'Search is temporarily unavailable'
+            for text in list(soup.find_all(
+                string=lambda value: (
+                    value and unavailable_message in value
+                ),
+            )):
+                parent = text.parent
+                if (
+                    parent
+                    and parent.name in {'div', 'p', 'span'}
+                    and parent.get_text(' ', strip=True) == unavailable_message
+                ):
+                    parent.decompose()
+                else:
+                    text.replace_with('')
 
         if search_facets := soup.find('div', class_="apachesolr-browse-blocks"):
             search_facets.decompose()            
@@ -2006,10 +2055,6 @@ class PageTask(BaseTask):
             bool(facet_definitions) or configured_facet_page
         )
 
-    def _is_unavailable_search_page(self, soup):
-        if main_content := soup.find('section', id='section-content'):
-            return 'Search is temporarily unavailable' in main_content.get_text()
-        
     def login_page(self, soup):
         if main_content := soup.find('section', id='section-content'):
             if login_form := main_content.find('form', id='user-login'):

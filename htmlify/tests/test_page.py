@@ -1267,6 +1267,56 @@ class TestFacetSearch(unittest.TestCase):
 
         self.assertTrue(task._is_search_page())
 
+    def test_unavailable_search_page_gets_static_google_form(self):
+        task = PageTask(
+            url='https://bombus-bg.myspecies.info/search',
+            output_dir=Path('/tmp/bombus-bg-test'),
+        )
+        soup = BeautifulSoup(
+            '''
+            <html><body>
+              <section id="section-content">
+                <h1>Search</h1>
+                <div id="block-system-main"><div class="content">
+                  <p>Search is temporarily unavailable</p>
+                </div></div>
+              </section>
+            </body></html>
+            ''',
+            'html.parser',
+        )
+
+        task.search_page(soup)
+
+        form = soup.select_one('form#search-form')
+        self.assertIsNotNone(form)
+        self.assertEqual(form['action'], 'https://www.google.com/search')
+        self.assertEqual(form['method'], 'get')
+        self.assertEqual(form.select_one('input[name="q"]')['type'], 'search')
+        self.assertEqual(
+            form.select_one('input[name="as_sitesearch"]')['value'],
+            'bombus-bg.myspecies.info',
+        )
+        self.assertNotIn('temporarily unavailable', soup.get_text())
+        self.assertEqual(soup.h1.get_text(strip=True), 'Search')
+
+    def test_search_unavailable_message_on_node_is_not_a_search_failure(self):
+        task = PageTask(
+            url='https://bombus-bg.myspecies.info/node/603',
+            output_dir=Path('/tmp/bombus-bg-test'),
+        )
+        soup = BeautifulSoup(
+            '<section id="section-content">'
+            '<p>Search is temporarily unavailable</p>'
+            '</section>',
+            'html.parser',
+        )
+
+        task.search_page(soup)
+
+        self.assertIsNone(soup.select_one('form#search-form'))
+        self.assertIn('Search is temporarily unavailable', soup.get_text())
+
     def test_faceted_page_is_incomplete_when_its_json_index_is_missing(self):
         with tempfile.TemporaryDirectory() as directory:
             output_dir = Path(directory)
