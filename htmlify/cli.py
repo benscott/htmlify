@@ -293,6 +293,14 @@ def _print_sitemap_inventory(inventory):
     typer.echo(f"Sites: {summary['sites']:,}")
     typer.echo(f"Sitemaps present: {summary['sitemaps']:,}")
     typer.echo(f"Total URLs: {summary['urls']:,}")
+    completion_percentage = (
+        summary['completed_urls'] / summary['urls'] * 100
+        if summary['urls'] else 0
+    )
+    typer.echo(
+        f"URLs completed: {summary['completed_urls']:,} / "
+        f"{summary['urls']:,} ({completion_percentage:.1f}%)"
+    )
     for status, status_count in summary['statuses'].items():
         typer.echo(f'{status}: {status_count:,}')
 

@@ -78,6 +78,7 @@ class TestSitemapInventory(unittest.TestCase):
                 'sites': 4,
                 'sitemaps': 4,
                 'urls': 12,
+                'completed_urls': 3,
                 'statuses': {
                     'complete': 1,
                     'not run': 1,

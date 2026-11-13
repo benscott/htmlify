@@ -26,10 +26,17 @@ class SitemapInventory:
         statuses = {}
         for site in self.sites:
             statuses[site.status] = statuses.get(site.status, 0) + 1
+        total_urls = sum(site.sitemap_urls or 0 for site in self.sites)
+        completed_urls = sum(
+            site.sitemap_urls or 0
+            for site in self.sites
+            if site.status == 'complete'
+        )
         return {
             'sites': len(self.sites),
             'sitemaps': sum(site.sitemap_urls is not None for site in self.sites),
-            'urls': sum(site.sitemap_urls or 0 for site in self.sites),
+            'urls': total_urls,
+            'completed_urls': completed_urls,
             'statuses': dict(sorted(statuses.items())),
         }
 
