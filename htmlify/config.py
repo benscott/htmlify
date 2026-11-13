@@ -69,6 +69,39 @@ NON_SCRATCHPAD_DOMAINS = frozenset({
     'vbrant.myspecies.info',
 })
 
+# Scratchpads which remain live in the Kubernetes cluster are not candidates
+# for the static archive. This list mirrors the deployed projects in
+# scratchpads-manifests. Alkcarb has both its old myspecies.info hostname and
+# its current myrocks.info BASE_URL, so both names are retained here.
+KUBERNETES_DOMAINS = frozenset({
+    'alienplantsbelgium.myspecies.info',
+    'alkcarb.myrocks.info',
+    'alkcarb.myspecies.info',
+    'fungi.myspecies.info',
+    'milichiidae.myspecies.info',
+    'mosquito-taxonomic-inventory.myspecies.info',
+    'myriatrix.myspecies.info',
+    'phthiraptera.myspecies.info',
+    'sciaroidea.myspecies.info',
+    'solanaceaesource.myspecies.info',
+    'sphingidae.myspecies.info',
+    'wallacefund.myspecies.info',
+    'wallaceletters.myspecies.info',
+})
+
+# These two legacy sites were already deliberately omitted by the old
+# tranche list. Keep that policy while centralising all default exclusions.
+LEGACY_EXCLUDED_DOMAINS = frozenset({
+    'acoela.myspecies.info',
+    'agromyzidae.myspecies.info',
+})
+
+ARCHIVE_EXCLUDED_DOMAINS = (
+    NON_SCRATCHPAD_DOMAINS
+    | KUBERNETES_DOMAINS
+    | LEGACY_EXCLUDED_DOMAINS
+)
+
 
 def configure_local_source(
     *,

@@ -381,15 +381,20 @@ def sitemaps(
     domain_column = 'resolved_domain' if 'resolved_domain' in sites else 'domain'
     if 'platform_path' in sites:
         sites = sites[sites.platform_path.notnull()]
-    domains = [
+    registered_domains = [
         str(value)
         for value in sites[domain_column].dropna().unique()
         if str(value) not in config.NON_SCRATCHPAD_DOMAINS
     ]
     if domain:
-        if domain not in domains:
+        if domain not in registered_domains:
             raise typer.BadParameter(f'No registered site matching {domain}')
         domains = [domain]
+    else:
+        domains = [
+            value for value in registered_domains
+            if value not in config.ARCHIVE_EXCLUDED_DOMAINS
+        ]
 
     result = None
     sitemap_failures = []

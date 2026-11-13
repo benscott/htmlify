@@ -29,23 +29,6 @@ class MigrateTask(BaseTask):
     sort_by = luigi.Parameter(default='name')
     sort_order = luigi.Parameter(default='asc')
 
-    tranche_1_domains = [
-        'alkcarb.myspecies.info',
-        'fungi.myspecies.info',
-        'milichiidae.myspecies.info',
-        'mosquito-taxonomic-inventory.myspecies.info',
-        'myriatrix.myspecies.info',
-        'phthiraptera.myspecies.info',
-        'sciaroidea.myspecies.info',
-        'solanaceaesource.myspecies.info',
-        'sphingidae.myspecies.info',  
-        'wallacefund.myspecies.info',
-        'wallaceletters.myspecies.info',
-        # Sites to ignore
-        'acoela.myspecies.info',
-        'agromyzidae.myspecies.info',      
-    ]
-    
     def requires(self):
 
         sites_list_task = SitesListTask()
@@ -61,10 +44,6 @@ class MigrateTask(BaseTask):
 
         for i, (idx, row) in enumerate(df[df.platform_path.notnull()].iterrows()):
             domain = row.resolved_domain
-
-            if domain in self.tranche_1_domains:
-                logger.debug(f'Skipping tranche 1 site {domain}')
-                continue
 
             # This also raises SiteUnavailableError on a timeout or HTTP
             # failure, preventing an unreadable site from being archived.
@@ -101,13 +80,12 @@ class MigrateTask(BaseTask):
             logger.debug(f'Migrating site {self.domain}')
         else:
             # Sort and slice only sites that can actually be scheduled. This
-            # keeps --limit accurate and avoids requiring counts for the
-            # deliberately excluded tranche.
+            # keeps --limit accurate and avoids requiring sitemap counts for
+            # deliberately excluded sites.
             df = df[df.platform_path.notnull()]
             df = df[
-                ~df.resolved_domain.isin(config.NON_SCRATCHPAD_DOMAINS)
+                ~df.resolved_domain.isin(config.ARCHIVE_EXCLUDED_DOMAINS)
             ]
-            df = df[~df.resolved_domain.isin(self.tranche_1_domains)]
             complete = df.resolved_domain.map(self.archive_is_complete)
             complete_count = int(complete.sum())
             if complete_count:

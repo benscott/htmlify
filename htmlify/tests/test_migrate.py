@@ -148,14 +148,20 @@ class TestMigrationOrdering(unittest.TestCase):
             ['bravo.myspecies.info', 'charlie.myspecies.info'],
         )
 
-    def test_non_scratchpads_do_not_require_sitemaps_for_url_ordering(self):
+    def test_default_exclusions_do_not_require_sitemaps_for_url_ordering(self):
         sites = self.sites()
         sites['platform_path'] = '/var/aegir/platforms/scratchpads'
-        sites.loc[len(sites)] = {
-            'domain': 'stats.myspecies.info',
-            'resolved_domain': 'stats.myspecies.info',
-            'platform_path': '/var/aegir/platforms/stats',
-        }
+        excluded = [
+            'stats.myspecies.info',
+            'phthiraptera.myspecies.info',
+            'alienplantsbelgium.myspecies.info',
+        ]
+        for domain in excluded:
+            sites.loc[len(sites)] = {
+                'domain': domain,
+                'resolved_domain': domain,
+                'platform_path': '/var/aegir/platforms/excluded',
+            }
 
         with tempfile.TemporaryDirectory() as directory:
             processing = Path(directory)
@@ -182,9 +188,28 @@ class TestMigrationOrdering(unittest.TestCase):
             ):
                 selected = task.select_sites(sites)
 
-        self.assertNotIn(
-            'stats.myspecies.info',
+        selected_domains = selected.resolved_domain.tolist()
+        for domain in excluded:
+            self.assertNotIn(domain, selected_domains)
+
+    def test_explicit_domain_can_select_a_default_exclusion(self):
+        sites = self.sites()
+        sites['platform_path'] = '/var/aegir/platforms/scratchpads'
+        sites.loc[len(sites)] = {
+            'domain': 'phthiraptera.myspecies.info',
+            'resolved_domain': 'phthiraptera.myspecies.info',
+            'platform_path': '/var/aegir/platforms/scratchpads',
+        }
+        task = MigrateTask(
+            domain='phthiraptera.myspecies.info',
+            platform_path=None,
+        )
+
+        selected = task.select_sites(sites)
+
+        self.assertEqual(
             selected.resolved_domain.tolist(),
+            ['phthiraptera.myspecies.info'],
         )
 
 
